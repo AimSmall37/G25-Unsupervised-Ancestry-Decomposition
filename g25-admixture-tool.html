@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>G25 Unsupervised Ancestry Decomposition</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --bg: #0c0e13;
+    --surface: #13161d;
+    --surface2: #1a1e28;
+    --border: #2a2f3d;
+    --text: #d4d8e3;
+    --text-dim: #6b7394;
+    --accent: #5b8def;
+    --accent-glow: rgba(91, 141, 239, 0.15);
+    --danger: #ef5b5b;
+    --success: #5bef8f;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  .app-header {
+    padding: 32px 40px 24px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(91,141,239,0.04) 0%, transparent 100%);
+  }
+  .app-header h1 {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -0.5px;
+    color: #fff;
+  }
+  .app-header p {
+    color: var(--text-dim);
+    font-size: 13px;
+    margin-top: 6px;
+    max-width: 780px;
+  }
+
+  .container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 28px 40px 60px;
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 20px;
+  }
+  .panel-head {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .panel-head h2 {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--accent);
+  }
+  .panel-body { padding: 20px; }
+
+  textarea {
+    width: 100%;
+    height: 200px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    padding: 14px;
+    resize: vertical;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  textarea:focus { border-color: var(--accent); }
+  textarea::placeholder { color: var(--text-dim); }
+
+  .controls-row {
+    display: flex;
+    gap: 16px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    margin-top: 16px;
+  }
+  .control-group { display: flex; flex-direction: column; gap: 6px; }
+  .control-group label {
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-dim);
+  }
+  .control-group select, .control-group input[type="number"] {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    padding: 8px 12px;
+    outline: none;
+    min-width: 80px;
+  }
+  .control-group select:focus, .control-group input:focus { border-color: var(--accent); }
+
+  .btn {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    padding: 10px 24px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { filter: brightness(1.15); box-shadow: 0 0 20px var(--accent-glow); }
+  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; filter: none; box-shadow: none; }
+  .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-secondary:hover { border-color: var(--accent); }
+
+  .status-bar {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+    padding: 10px 0;
+    min-height: 36px;
+  }
+  .status-bar .ok { color: var(--success); }
+  .status-bar .err { color: var(--danger); }
+
+  .bic-chart { display: flex; align-items: flex-end; gap: 6px; height: 120px; padding: 10px 0; }
+  .bic-bar-wrap { display: flex; flex-direction: column; align-items: center; flex: 1; max-width: 60px; height: 100%; justify-content: flex-end; cursor: pointer; }
+  .bic-bar { width: 100%; border-radius: 3px 3px 0 0; transition: height 0.4s ease; min-height: 4px; }
+  .bic-label { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--text-dim); margin-top: 6px; }
+  .bic-val { font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: var(--text-dim); margin-bottom: 4px; white-space: nowrap; }
+
+  #admixture-plot { width: 100%; overflow-x: auto; padding-bottom: 10px; }
+  #admixture-canvas { display: block; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; padding: 12px 0 0; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
+  .legend-swatch { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+
+  .component-table { width: 100%; border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 12px; margin-top: 10px; }
+  .component-table th { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text-dim); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 0; background: var(--surface); }
+  .component-table td { padding: 6px 12px; border-bottom: 1px solid rgba(42,47,61,0.5); white-space: nowrap; }
+  .component-table tr:hover td { background: rgba(91,141,239,0.04); }
+  .table-scroll { max-height: 400px; overflow-y: auto; }
+
+  .info-box { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 14px 18px; font-size: 12px; color: var(--text-dim); line-height: 1.7; }
+  .info-box code { background: var(--surface2); padding: 1px 5px; border-radius: 3px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text); }
+  .info-box strong { color: var(--text); }
+
+  .hidden { display: none !important; }
+  .sort-group { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .sort-group .btn { padding: 6px 12px; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<div class="app-header">
+  <h1>G25 → Unsupervised Ancestry Decomposition</h1>
+  <p>Paste G25 scaled coordinates below. The tool factorizes the coordinate matrix X ≈ Q·P where Q holds simplex-constrained mixture proportions and P holds ancestral centroids — producing genuine soft ancestry fractions analogous to ADMIXTURE.</p>
+</div>
+
+<div class="container">
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Input — G25 Coordinates</h2>
+      <button class="btn btn-secondary" onclick="loadSample()" style="padding:6px 14px; font-size:11px;">Load Sample Data</button>
+    </div>
+    <div class="panel-body">
+      <textarea id="input-data" placeholder="Population_Label,0.123,0.045,-0.067,...&#10;Each row: label followed by comma-separated coordinates.&#10;Standard Vahaduo/G25 scaled format."></textarea>
+      <div class="controls-row">
+        <div class="control-group">
+          <label>Mode</label>
+          <select id="mode-select">
+            <option value="single">Single K</option>
+            <option value="sweep">Sweep K range</option>
+          </select>
+        </div>
+        <div class="control-group">
+          <label>K</label>
+          <input type="number" id="k-val" value="4" min="2" max="20" style="width:65px;">
+        </div>
+        <div class="control-group hidden" id="k-max-group">
+          <label>K max</label>
+          <input type="number" id="k-max" value="10" min="3" max="20" style="width:65px;">
+        </div>
+        <div class="control-group">
+          <label>Iterations</label>
+          <input type="number" id="em-iter" value="500" min="50" max="5000" style="width:80px;">
+        </div>
+        <div class="control-group">
+          <label>Restarts</label>
+          <input type="number" id="n-runs" value="10" min="1" max="30" style="width:65px;">
+        </div>
+        <div class="control-group">
+          <label>Palette</label>
+          <select id="palette-select">
+            <option value="classic">Classic</option>
+            <option value="earth">Earth Tones</option>
+            <option value="vibrant">Vibrant</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" id="run-btn" onclick="runAnalysis()">Run Analysis</button>
+      </div>
+      <div class="status-bar" id="status"></div>
+    </div>
+  </div>
+
+  <div class="panel hidden" id="bic-panel">
+    <div class="panel-head"><h2>Model Selection — Reconstruction Error by K</h2></div>
+    <div class="panel-body">
+      <p style="font-size:12px; color:var(--text-dim); margin-bottom:10px;">Lower = better fit. Look for the "elbow" where adding more components yields diminishing returns. Click any bar to view that K.</p>
+      <div class="bic-chart" id="bic-chart"></div>
+    </div>
+  </div>
+
+  <div class="panel hidden" id="plot-panel">
+    <div class="panel-head">
+      <h2>Ancestry Decomposition — K=<span id="plot-k"></span></h2>
+      <div class="sort-group">
+        <span style="font-size:11px; color:var(--text-dim);">Sort:</span>
+        <button class="btn btn-secondary" onclick="sortPlot('input')">Input</button>
+        <button class="btn btn-secondary" onclick="sortPlot('cluster')">Cluster</button>
+        <button class="btn btn-secondary" onclick="sortPlot('name')">Name</button>
+      </div>
+    </div>
+    <div class="panel-body">
+      <div id="admixture-plot"><canvas id="admixture-canvas"></canvas></div>
+      <div class="legend" id="legend"></div>
+    </div>
+  </div>
+
+  <div class="panel hidden" id="table-panel">
+    <div class="panel-head">
+      <h2>Component Proportions</h2>
+      <button class="btn btn-secondary" onclick="exportCSV()" style="padding:6px 14px; font-size:11px;">Export CSV</button>
+    </div>
+    <div class="panel-body">
+      <div class="table-scroll" id="table-scroll"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>Method Notes</h2></div>
+    <div class="panel-body">
+      <div class="info-box">
+        <strong>Algorithm:</strong> Decomposes the N×D coordinate matrix <strong>X ≈ Q·P</strong> where
+        <strong>Q</strong> (N×K) holds per-sample ancestry proportions constrained to the probability simplex
+        (each row ≥ 0 and sums to 1) and <strong>P</strong> (K×D) holds ancestral component centroids
+        (unconstrained, since G25 coords can be negative). Uses <strong>alternating least squares</strong>:
+        fix Q → solve for P via closed-form OLS; fix P → update Q row-by-row via projected gradient descent
+        onto the simplex (Duchi et al. 2008). Multiple random restarts with K-means++ seeding. This constraint
+        structure directly mirrors ADMIXTURE's requirement that ancestry fractions be non-negative and sum to
+        unity, producing genuine soft mixtures rather than the hard 0/100 assignments of a Gaussian Mixture Model.
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const PALETTES = {
+  classic: ["#E63946","#457B9D","#F4A261","#2A9D8F","#E9C46A","#264653","#F77F00","#D62828","#023E8A","#6A994E","#BC6C25","#606C38","#9B2226","#005F73","#AE2012","#BB3E03","#CA6702","#EE9B00","#94D2BD","#0A9396"],
+  earth: ["#8B4513","#556B2F","#B8860B","#2F4F4F","#CD853F","#6B8E23","#A0522D","#708090","#D2B48C","#4682B4","#8FBC8F","#BC8F8F","#5F9EA0","#DAA520","#778899","#9ACD32","#F4A460","#6B4226","#808000","#B0C4DE"],
+  vibrant: ["#FF006E","#3A86FF","#FFBE0B","#8338EC","#FB5607","#06D6A0","#118AB2","#EF476F","#FFD166","#073B4C","#E63946","#2EC4B6","#F72585","#7209B7","#4CC9F0","#F94144","#90BE6D","#F9C74F","#43AA8B","#577590"]
+};
+
+let currentResult = null;
+let currentSamples = null;
+let currentSortMode = 'input';
+
+const modeSelect = document.getElementById('mode-select');
+const kMaxGroup = document.getElementById('k-max-group');
+modeSelect.addEventListener('change', () => {
+  kMaxGroup.classList.toggle('hidden', modeSelect.value !== 'sweep');
+});
+
+function parseG25(text) {
+  return text.trim().split('\n').filter(l => l.trim() && !l.trim().startsWith('#')).map(line => {
+    const parts = line.split(',').map(s => s.trim());
+    if (parts.length < 2) return null;
+    const name = parts[0].replace(/"/g, '');
+    const coords = parts.slice(1).map(Number);
+    if (coords.length < 2 || coords.some(isNaN)) return null;
+    return { name, coords };
+  }).filter(Boolean);
+}
+
+// ═══ Simplex projection (Duchi et al. 2008) ═══
+function projectSimplex(v) {
+  const n = v.length;
+  const u = [...v].sort((a, b) => b - a);
+  let cumSum = 0, rho = 0;
+  for (let j = 0; j < n; j++) {
+    cumSum += u[j];
+    if (u[j] + (1 - cumSum) / (j + 1) > 0) rho = j + 1;
+  }
+  let s = 0;
+  for (let j = 0; j < rho; j++) s += u[j];
+  const theta = (s - 1) / rho;
+  const w = new Float64Array(n);
+  for (let i = 0; i < n; i++) w[i] = Math.max(v[i] - theta, 0);
+  return w;
+}
+
+function makeRng(seed) {
+  let s = seed | 0;
+  return () => { s = (s * 1664525 + 1013904223) & 0x7fffffff; return s / 0x7fffffff; };
+}
+
+function kmeansppInit(data, K, rand) {
+  const N = data.length, D = data[0].length;
+  const idxs = [];
+  const used = new Set();
+  let c = Math.floor(rand() * N);
+  idxs.push(c); used.add(c);
+  for (let k = 1; k < K; k++) {
+    const dists = new Float64Array(N);
+    for (let i = 0; i < N; i++) {
+      if (used.has(i)) continue;
+      let minD = Infinity;
+      for (const ci of idxs) {
+        let d = 0;
+        for (let j = 0; j < D; j++) d += (data[i][j] - data[ci][j]) ** 2;
+        if (d < minD) minD = d;
+      }
+      dists[i] = minD;
+    }
+    const total = dists.reduce((a, b) => a + b, 0);
+    let r = rand() * total, chosen = 0;
+    for (let i = 0; i < N; i++) { r -= dists[i]; if (r <= 0) { chosen = i; break; } }
+    idxs.push(chosen); used.add(chosen);
+  }
+  return idxs;
+}
+
+// ═══ Matrix inversion for small K×K ═══
+function invertMatrix(M, n) {
+  const aug = Array.from({ length: n }, (_, i) => {
+    const row = new Float64Array(2 * n);
+    for (let j = 0; j < n; j++) row[j] = M[i][j];
+    row[n + i] = 1;
+    return row;
+  });
+  for (let col = 0; col < n; col++) {
+    let maxVal = Math.abs(aug[col][col]), maxRow = col;
+    for (let row = col + 1; row < n; row++) {
+      if (Math.abs(aug[row][col]) > maxVal) { maxVal = Math.abs(aug[row][col]); maxRow = row; }
+    }
+    [aug[col], aug[maxRow]] = [aug[maxRow], aug[col]];
+    const pivot = aug[col][col];
+    if (Math.abs(pivot) < 1e-15) continue;
+    for (let j = 0; j < 2 * n; j++) aug[col][j] /= pivot;
+    for (let row = 0; row < n; row++) {
+      if (row === col) continue;
+      const f = aug[row][col];
+      for (let j = 0; j < 2 * n; j++) aug[row][j] -= f * aug[col][j];
+    }
+  }
+  return aug.map(row => Float64Array.from(row.slice(n)));
+}
+
+// ═══ Core: Alternating Least Squares with Simplex Projection ═══
+function runALS(data, K, maxIter, seed) {
+  const N = data.length, D = data[0].length;
+  const rand = makeRng(seed);
+
+  // Init P from K-means++ centroids
+  const initIdx = kmeansppInit(data, K, rand);
+  const P = initIdx.map(i => Float64Array.from(data[i]));
+
+  // Init Q: uniform + noise, then project
+  const Q = Array.from({ length: N }, () => {
+    const row = new Float64Array(K);
+    for (let k = 0; k < K; k++) row[k] = 1 / K + (rand() - 0.5) * 0.2;
+    return projectSimplex(row);
+  });
+
+  let prevErr = Infinity;
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    // ── Step 1: Fix Q, solve P = (Q^T Q)^{-1} Q^T X ──
+    const QtQ = Array.from({ length: K }, () => new Float64Array(K));
+    for (let i = 0; i < N; i++)
+      for (let a = 0; a < K; a++)
+        for (let b = a; b < K; b++)
+          QtQ[a][b] += Q[i][a] * Q[i][b];
+    for (let a = 0; a < K; a++) {
+      for (let b = 0; b < a; b++) QtQ[a][b] = QtQ[b][a];
+      QtQ[a][a] += 1e-7; // ridge
+    }
+
+    const QtX = Array.from({ length: K }, () => new Float64Array(D));
+    for (let i = 0; i < N; i++)
+      for (let k = 0; k < K; k++) {
+        const q = Q[i][k];
+        if (q < 1e-15) continue;
+        for (let d = 0; d < D; d++) QtX[k][d] += q * data[i][d];
+      }
+
+    const inv = invertMatrix(QtQ, K);
+    for (let k = 0; k < K; k++)
+      for (let d = 0; d < D; d++) {
+        let v = 0;
+        for (let j = 0; j < K; j++) v += inv[k][j] * QtX[j][d];
+        P[k][d] = v;
+      }
+
+    // ── Step 2: Fix P, solve for each Q[i] via projected gradient ──
+    // Precompute P·P^T (K×K)
+    const PPt = Array.from({ length: K }, () => new Float64Array(K));
+    for (let a = 0; a < K; a++)
+      for (let b = a; b < K; b++) {
+        let dot = 0;
+        for (let d = 0; d < D; d++) dot += P[a][d] * P[b][d];
+        PPt[a][b] = dot; PPt[b][a] = dot;
+      }
+
+    // Step size: 1 / max eigenvalue estimate of PPt (use trace as upper bound)
+    let trPPt = 0;
+    for (let k = 0; k < K; k++) trPPt += PPt[k][k];
+    const stepSize = 0.9 / (trPPt + 1e-10);
+
+    for (let i = 0; i < N; i++) {
+      // Precompute P·x_i
+      const Px = new Float64Array(K);
+      for (let k = 0; k < K; k++) {
+        let dot = 0;
+        for (let d = 0; d < D; d++) dot += P[k][d] * data[i][d];
+        Px[k] = dot;
+      }
+
+      let q = Float64Array.from(Q[i]);
+      for (let pgd = 0; pgd < 80; pgd++) {
+        // Gradient: PPt·q - Px
+        const grad = new Float64Array(K);
+        for (let a = 0; a < K; a++) {
+          let g = -Px[a];
+          for (let b = 0; b < K; b++) g += PPt[a][b] * q[b];
+          grad[a] = g;
+        }
+        const qNew = new Float64Array(K);
+        for (let k = 0; k < K; k++) qNew[k] = q[k] - stepSize * grad[k];
+        q = projectSimplex(qNew);
+      }
+      Q[i] = q;
+    }
+
+    // Reconstruction error
+    let err = 0;
+    for (let i = 0; i < N; i++)
+      for (let d = 0; d < D; d++) {
+        let r = 0;
+        for (let k = 0; k < K; k++) r += Q[i][k] * P[k][d];
+        err += (data[i][d] - r) ** 2;
+      }
+    err /= (N * D);
+
+    if (iter > 5 && Math.abs(prevErr - err) < 1e-12) break;
+    prevErr = err;
+  }
+
+  return { Q, P, error: prevErr };
+}
+
+function bestOfRuns(data, K, maxIter, nRuns) {
+  let best = null;
+  for (let r = 0; r < nRuns; r++) {
+    const seed = (K * 100003 + r * 7919 + 42) | 0;
+    const res = runALS(data, K, maxIter, seed);
+    if (!best || res.error < best.error) best = res;
+  }
+  // Sort components by total weight
+  const N = data.length;
+  const totals = new Float64Array(K);
+  for (let i = 0; i < N; i++) for (let k = 0; k < K; k++) totals[k] += best.Q[i][k];
+  const order = Array.from({ length: K }, (_, i) => i).sort((a, b) => totals[b] - totals[a]);
+  const sQ = best.Q.map(row => { const nr = new Float64Array(K); for (let k = 0; k < K; k++) nr[k] = row[order[k]]; return nr; });
+  const sP = order.map(k => best.P[k]);
+  return { Q: sQ, P: sP, error: best.error };
+}
+
+function setStatus(msg, type) {
+  document.getElementById('status').innerHTML = type ? `<span class="${type}">${msg}</span>` : msg;
+}
+
+async function runAnalysis() {
+  const samples = parseG25(document.getElementById('input-data').value);
+  if (samples.length < 4) { setStatus('Need at least 4 valid samples.', 'err'); return; }
+  const D = samples[0].coords.length;
+  if (samples.some(s => s.coords.length !== D)) { setStatus('Inconsistent dimensions.', 'err'); return; }
+
+  const data = samples.map(s => s.coords);
+  const mode = modeSelect.value;
+  const maxIter = parseInt(document.getElementById('em-iter').value) || 500;
+  const nRuns = parseInt(document.getElementById('n-runs').value) || 10;
+  document.getElementById('run-btn').disabled = true;
+  currentSamples = samples;
+
+  if (mode === 'sweep') {
+    const kMin = 2, kMax = Math.min(parseInt(document.getElementById('k-max').value) || 10, samples.length - 1);
+    const results = [];
+    for (let k = kMin; k <= kMax; k++) {
+      setStatus(`Running K=${k} (${nRuns} restarts)...`);
+      await new Promise(r => setTimeout(r, 10));
+      results.push({ k, ...bestOfRuns(data, k, maxIter, nRuns) });
+    }
+    let bestIdx = 0;
+    for (let i = 1; i < results.length; i++) if (results[i].error < results[bestIdx].error) bestIdx = i;
+    showErrorChart(results, bestIdx);
+    currentResult = results[bestIdx];
+    setStatus(`Done. Showing K=${results[bestIdx].k}. Click bars to compare.`, 'ok');
+    showPlot(samples, currentResult); showTable(samples, currentResult);
+  } else {
+    const K = Math.min(parseInt(document.getElementById('k-val').value) || 4, samples.length - 1);
+    setStatus(`Running K=${K} (${nRuns} restarts)...`);
+    await new Promise(r => setTimeout(r, 10));
+    currentResult = { k: K, ...bestOfRuns(data, K, maxIter, nRuns) };
+    document.getElementById('bic-panel').classList.add('hidden');
+    setStatus(`Done. K=${K}, MSE=${currentResult.error.toExponential(3)}`, 'ok');
+    showPlot(samples, currentResult); showTable(samples, currentResult);
+  }
+  document.getElementById('run-btn').disabled = false;
+}
+
+function showErrorChart(results, bestIdx) {
+  document.getElementById('bic-panel').classList.remove('hidden');
+  const c = document.getElementById('bic-chart');
+  c.innerHTML = '';
+  const maxE = Math.max(...results.map(r => r.error));
+  const minE = Math.min(...results.map(r => r.error));
+  const range = maxE - minE || 1;
+  results.forEach((r, i) => {
+    const wrap = document.createElement('div'); wrap.className = 'bic-bar-wrap';
+    const val = document.createElement('div'); val.className = 'bic-val'; val.textContent = r.error.toExponential(2);
+    const bar = document.createElement('div'); bar.className = 'bic-bar';
+    bar.style.height = (15 + 80 * ((r.error - minE) / range)) + '%';
+    bar.style.background = i === bestIdx ? 'var(--accent)' : 'var(--surface2)';
+    bar.style.border = i === bestIdx ? 'none' : '1px solid var(--border)';
+    bar.title = `K=${r.k}`;
+    wrap.onclick = () => { currentResult = r; showPlot(currentSamples, r); showTable(currentSamples, r); };
+    const label = document.createElement('div'); label.className = 'bic-label'; label.textContent = 'K=' + r.k;
+    if (i === bestIdx) label.style.color = 'var(--accent)';
+    wrap.append(val, bar, label); c.appendChild(wrap);
+  });
+}
+
+function getSorted(samples, result, mode) {
+  const N = samples.length, K = result.Q[0].length;
+  const idx = Array.from({ length: N }, (_, i) => i);
+  if (mode === 'name') idx.sort((a, b) => samples[a].name.localeCompare(samples[b].name));
+  else if (mode === 'cluster') idx.sort((a, b) => {
+    let aM = 0, bM = 0, aV = 0, bV = 0;
+    for (let k = 0; k < K; k++) { if (result.Q[a][k] > aV) { aV = result.Q[a][k]; aM = k; } if (result.Q[b][k] > bV) { bV = result.Q[b][k]; bM = k; } }
+    return aM !== bM ? aM - bM : bV - aV;
+  });
+  return idx;
+}
+
+function showPlot(samples, result) {
+  const K = result.Q[0].length, N = samples.length;
+  document.getElementById('plot-panel').classList.remove('hidden');
+  document.getElementById('plot-k').textContent = K;
+  const pal = PALETTES[document.getElementById('palette-select').value] || PALETTES.classic;
+
+  const barW = Math.max(Math.min(40, Math.floor(1100 / N)), 6);
+  const gap = barW > 10 ? 1 : 0, barH = 220, labelH = 140, xStart = 30;
+  const cW = xStart + N * (barW + gap) + 40, cH = barH + labelH + 20;
+  const canvas = document.getElementById('admixture-canvas');
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = cW * dpr; canvas.height = cH * dpr;
+  canvas.style.width = cW + 'px'; canvas.style.height = cH + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr); ctx.clearRect(0, 0, cW, cH);
+
+  const indices = getSorted(samples, result, currentSortMode);
+  for (let n = 0; n < N; n++) {
+    const i = indices[n], x = xStart + n * (barW + gap);
+    let y = 10;
+    for (let k = 0; k < K; k++) {
+      const h = result.Q[i][k] * barH;
+      if (h < 0.05) continue;
+      ctx.fillStyle = pal[k % pal.length];
+      ctx.fillRect(x, y, barW, h);
+      y += h;
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 0.5;
+    ctx.strokeRect(x, 10, barW, barH);
+  }
+  ctx.font = `${Math.min(11, barW - 1)}px 'IBM Plex Mono', monospace`;
+  ctx.fillStyle = '#6b7394';
+  for (let n = 0; n < N; n++) {
+    const i = indices[n], x = xStart + n * (barW + gap) + barW / 2;
+    ctx.save(); ctx.translate(x, barH + 16); ctx.rotate(Math.PI / 2);
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(samples[i].name, 0, 0); ctx.restore();
+  }
+
+  const legend = document.getElementById('legend'); legend.innerHTML = '';
+  for (let k = 0; k < K; k++) {
+    const item = document.createElement('div'); item.className = 'legend-item';
+    const sw = document.createElement('div'); sw.className = 'legend-swatch'; sw.style.background = pal[k % pal.length];
+    const lb = document.createElement('span'); lb.textContent = `Component ${k + 1}`;
+    item.append(sw, lb); legend.appendChild(item);
+  }
+}
+
+function sortPlot(mode) {
+  currentSortMode = mode;
+  if (currentResult && currentSamples) { showPlot(currentSamples, currentResult); }
+}
+
+function showTable(samples, result) {
+  const K = result.Q[0].length;
+  document.getElementById('table-panel').classList.remove('hidden');
+  const pal = PALETTES[document.getElementById('palette-select').value] || PALETTES.classic;
+  let html = '<table class="component-table"><thead><tr><th>Sample</th>';
+  for (let k = 0; k < K; k++) html += `<th><span style="color:${pal[k % pal.length]}">■</span> Comp ${k+1}</th>`;
+  html += '<th>Primary</th></tr></thead><tbody>';
+  for (const i of getSorted(samples, result, currentSortMode)) {
+    html += `<tr><td>${samples[i].name}</td>`;
+    let mK = 0, mV = 0;
+    for (let k = 0; k < K; k++) {
+      const v = result.Q[i][k], pct = (v * 100).toFixed(1);
+      html += `<td style="color:${v > 0.2 ? pal[k % pal.length] : 'var(--text-dim)'}">${pct}%</td>`;
+      if (v > mV) { mV = v; mK = k; }
+    }
+    html += `<td><span style="color:${pal[mK % pal.length]}">Comp ${mK+1}</span> (${(mV*100).toFixed(0)}%)</td></tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('table-scroll').innerHTML = html;
+}
+
+function exportCSV() {
+  if (!currentResult || !currentSamples) return;
+  const K = currentResult.Q[0].length;
+  let csv = 'Sample'; for (let k = 0; k < K; k++) csv += `,Component_${k+1}`; csv += '\n';
+  for (let i = 0; i < currentSamples.length; i++) {
+    csv += currentSamples[i].name;
+    for (let k = 0; k < K; k++) csv += ',' + (currentResult.Q[i][k] * 100).toFixed(2);
+    csv += '\n';
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = `g25_decomposition_K${K}.csv`; a.click();
+}
+
+function loadSample() {
+  document.getElementById('input-data').value = `English,0.0389,0.0596,0.0497,0.0167,0.003,-0.003,0.005,0.0014,-0.0057,-0.0008,-0.0003,-0.0018,0.0014,0.0028,-0.0001,0.0003,-0.0007,0.0004,-0.0004,-0.0004,0.001,0.0001,-0.0003,-0.0003,0.0003
+Scottish,0.0371,0.0549,0.054,0.0192,0.0066,-0.0034,0.0074,0.002,-0.008,-0.0007,-0.0011,-0.0017,0.0017,0.003,-0.0003,0.0006,-0.0005,0.0003,-0.0003,-0.0003,0.0013,0.0001,-0.0005,-0.0003,0.0003
+Irish,0.0341,0.0507,0.0575,0.0211,0.0094,-0.004,0.009,0.0024,-0.0098,-0.0004,-0.0015,-0.0014,0.002,0.003,-0.0004,0.001,-0.0004,0.0003,-0.0002,-0.0003,0.0015,0.0001,-0.0006,-0.0003,0.0003
+Norwegian,0.0414,0.0524,0.059,0.0243,0.0072,-0.0024,0.0032,0.0009,-0.0048,-0.0018,-0.0002,-0.0029,0.0015,0.0025,0,0.0001,-0.0012,0.0005,-0.0007,-0.0001,0.001,0.0003,-0.0001,-0.0005,0.0002
+Swedish,0.042,0.0558,0.0568,0.0218,0.0052,-0.002,0.003,0.001,-0.004,-0.001,0.0001,-0.0025,0.0013,0.0025,-0.0001,0.0001,-0.001,0.0005,-0.0006,-0.0002,0.0011,0.0002,-0.0002,-0.0004,0.0002
+French_North,0.0421,0.0678,0.0419,0.0084,0.0004,-0.002,0.003,0.001,-0.003,0.0005,0.0005,-0.001,0.001,0.0018,0,-0.0001,-0.0005,0.0003,-0.0003,-0.0002,0.0005,0.0001,-0.0001,-0.0002,0.0002
+French_South,0.0467,0.076,0.033,0.002,-0.004,-0.0005,0.0005,0.0005,-0.001,0.001,0.0008,0.0002,0.0003,0.0008,0.0003,-0.0005,-0.0001,0.0002,-0.0001,-0.0001,0.0001,0,-0.0001,-0.0001,0.0001
+Spanish_Castile,0.0434,0.081,0.0252,-0.003,-0.009,0.0015,-0.002,0.0005,0.002,0.002,0.0012,0.001,-0.0005,-0.0003,0.0005,-0.0008,0.0003,0.0001,0.0001,0,-0.0003,0,-0.0001,0,0
+Spanish_Galicia,0.04,0.077,0.031,-0.001,-0.007,0.001,-0.0005,0.001,0.001,0.0015,0.001,0.0008,-0.0003,-0.0002,0.0003,-0.0007,0.0002,0.0001,0,0,-0.0002,0,0,0,0
+Portuguese,0.0415,0.08,0.027,-0.003,-0.008,0.0015,-0.001,0.001,0.0015,0.002,0.0012,0.001,-0.0005,-0.0003,0.0005,-0.0008,0.0003,0.0001,0.0001,0,-0.0003,0,-0.0001,0,0
+Italian_North,0.049,0.079,0.031,0.001,-0.006,0.002,-0.003,0.001,-0.001,0,0.001,0.001,-0.001,-0.0005,0.001,-0.0005,0.0002,0.0001,0,0,0,0,0,0,0
+Italian_South,0.052,0.079,0.022,-0.003,-0.015,0.005,-0.007,0.002,0.001,-0.001,0.001,0.002,-0.002,-0.001,0.002,-0.001,0.001,0.0005,0.0001,0,-0.0005,0,0,0,0
+Sicilian,0.055,0.081,0.018,-0.005,-0.017,0.006,-0.009,0.0025,0.002,-0.0015,0.001,0.002,-0.003,-0.001,0.002,-0.001,0.001,0.001,0.0002,0,-0.0008,0,0,0,0
+Greek_Thessaly,0.058,0.0815,0.0265,-0.0045,-0.013,0.0035,-0.008,0.0015,0.0025,-0.0015,0.001,0.001,-0.0025,-0.001,0.002,-0.001,0.001,0.001,-0.0005,0.001,-0.0005,0.0005,0.0005,0,0.0005
+Greek_Crete,0.0609,0.0845,0.0285,-0.0065,-0.0135,0.003,-0.0095,0.001,0.002,-0.002,0.0005,0.0015,-0.003,-0.001,0.0025,-0.001,0.0005,0.001,-0.0005,0.0005,-0.001,0.0005,0.0005,-0.0005,0.0005
+German,0.0423,0.0625,0.0488,0.0145,0.001,-0.0025,0.004,0.001,-0.004,-0.0005,0,-0.002,0.001,0.002,0,-0.0001,-0.0007,0.0004,-0.0005,-0.0003,0.0008,0.0002,-0.0002,-0.0003,0.0002
+Polish,0.0445,0.0555,0.052,0.018,0.003,0.001,-0.0005,-0.001,-0.004,-0.002,0,-0.0015,0.001,0.002,0,0.0005,-0.001,0.0005,-0.0005,-0.0003,0.0008,0.0002,-0.0002,-0.0004,0.0002
+Russian,0.044,0.0505,0.0535,0.0215,0.006,0.002,-0.003,-0.002,-0.005,-0.003,-0.0005,-0.002,0.001,0.002,-0.0002,0.0005,-0.001,0.0005,-0.0005,-0.0003,0.001,0.0002,-0.0003,-0.0004,0.0003
+Finnish,0.042,0.0395,0.056,0.031,0.018,0.005,-0.009,-0.005,-0.008,-0.006,-0.002,-0.004,0.002,0.002,-0.001,0.001,-0.001,0.0005,-0.0005,-0.0003,0.001,0.0003,-0.0005,-0.0005,0.0003
+Lithuanian,0.0435,0.0505,0.055,0.022,0.006,0.003,-0.004,-0.003,-0.005,-0.003,-0.001,-0.002,0.001,0.002,-0.0003,0.0005,-0.001,0.0005,-0.0005,-0.0003,0.001,0.0002,-0.0003,-0.0004,0.0003
+Turkish,0.066,0.082,0.018,-0.012,-0.015,0.002,-0.008,0.002,0.008,0.003,0.002,0.003,-0.004,-0.003,0.002,-0.001,0.001,0.001,0,0,-0.001,0,0,0,0
+Lebanese,0.072,0.084,0.015,-0.016,-0.016,0.001,-0.006,0.001,0.012,0.006,0.003,0.004,-0.005,-0.004,0.002,-0.001,0.001,0.001,0,0,-0.001,0,0,0,0
+Iranian,0.073,0.072,0.014,-0.012,-0.007,-0.002,-0.008,-0.002,0.015,0.008,0.003,0.001,-0.004,-0.003,0.001,0,0.001,0.001,0,0,-0.001,0,0,0,0
+Saudi,0.082,0.076,0.001,-0.025,-0.012,-0.005,0.003,0.003,0.018,0.012,0.005,0.005,-0.006,-0.005,0.002,-0.001,0.001,0.001,0,0,-0.001,0,0,0,0
+Egyptian,0.079,0.068,-0.002,-0.026,-0.008,-0.008,0.008,0.006,0.015,0.014,0.007,0.005,-0.006,-0.005,0.001,-0.001,0.001,0.001,0,0,-0.001,0,0,0,0
+Moroccan,0.065,0.072,-0.002,-0.022,-0.012,-0.004,0.004,0.008,0.01,0.01,0.006,0.004,-0.004,-0.004,0.001,-0.001,0.001,0,0,0,-0.001,0,0,0,0
+Yoruba,0.082,-0.012,-0.068,-0.059,0.01,-0.018,0.035,0.025,-0.005,0.018,0.015,0.003,0.002,0.003,-0.004,0.002,-0.001,0,-0.001,0,0,0,0,0,0
+Mandinka,0.079,-0.008,-0.065,-0.055,0.012,-0.016,0.032,0.022,-0.003,0.016,0.013,0.002,0.002,0.003,-0.004,0.002,-0.001,0,-0.001,0,0,0,0,0,0
+Han_Chinese,0.074,0.006,-0.005,0.018,0.058,0.035,0.018,-0.025,-0.005,-0.01,-0.008,0.005,0.008,-0.003,-0.005,0.003,0.002,-0.001,0.001,0.001,0,0,0,0,0
+Japanese,0.071,0.008,-0.003,0.02,0.06,0.032,0.022,-0.028,-0.004,-0.012,-0.009,0.006,0.009,-0.003,-0.006,0.003,0.002,-0.001,0.001,0.001,0,0,0,0,0
+Tamil,0.085,0.061,-0.001,-0.01,0.012,-0.015,-0.025,-0.008,0.028,0.015,0.006,-0.005,-0.008,-0.003,0,-0.001,0,0.001,0,0,0,0,0,0,0
+Bengali,0.083,0.054,0.002,-0.004,0.022,-0.008,-0.018,-0.012,0.022,0.01,0.004,-0.003,-0.006,-0.003,-0.001,0,0,0.001,0,0,0,0,0,0,0`;
+  setStatus('Sample data loaded — 32 world populations. Try K=4 or sweep K=2–10.', 'ok');
+}
+</script>
+</body>
+</html>
