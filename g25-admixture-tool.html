@@ -80,6 +80,7 @@
     color: var(--accent);
   }
   .panel-body { padding: 20px; }
+  #table-panel .panel-body { overflow: visible; }
 
   textarea {
     width: 100%;
@@ -171,7 +172,7 @@
   .component-table th { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text-dim); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 0; background: var(--surface); }
   .component-table td { padding: 6px 12px; border-bottom: 1px solid rgba(42,47,61,0.5); white-space: nowrap; }
   .component-table tr:hover td { background: rgba(91,141,239,0.04); }
-  .table-scroll { max-height: 400px; overflow-y: auto; }
+  .table-scroll { height: 400px; overflow-y: auto; overflow-x: auto; resize: both; min-height: 150px; min-width: 300px; border: 1px solid var(--border); border-radius: 4px; padding: 0; }
 
   .info-box { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 14px 18px; font-size: 12px; color: var(--text-dim); line-height: 1.7; }
   .info-box code { background: var(--surface2); padding: 1px 5px; border-radius: 3px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text); }
@@ -193,7 +194,7 @@
 
   <div class="panel">
     <div class="panel-head">
-      <h2>Input — G25 Coordinates</h2>
+      <h2 id="input-title">Input — G25 Coordinates</h2>
       <button class="btn btn-secondary" onclick="loadSample()" style="padding:6px 14px; font-size:11px;">Load Sample Data</button>
     </div>
     <div class="panel-body">
@@ -252,6 +253,10 @@
         <button class="btn btn-secondary" onclick="sortPlot('input')">Input</button>
         <button class="btn btn-secondary" onclick="sortPlot('cluster')">Cluster</button>
         <button class="btn btn-secondary" onclick="sortPlot('name')">Name</button>
+        <span style="font-size:11px; color:var(--text-dim); margin-left:8px;">Layout:</span>
+        <button class="btn btn-secondary" id="btn-vertical" onclick="setOrientation('vertical')" style="border-color:var(--accent);">Vertical</button>
+        <button class="btn btn-secondary" id="btn-horizontal" onclick="setOrientation('horizontal')">Horizontal</button>
+        <button class="btn btn-secondary" onclick="exportChartJPG()" style="margin-left:8px;">Export JPG</button>
       </div>
     </div>
     <div class="panel-body">
@@ -298,12 +303,25 @@ const PALETTES = {
 let currentResult = null;
 let currentSamples = null;
 let currentSortMode = 'input';
+let chartOrientation = 'vertical';
 
 const modeSelect = document.getElementById('mode-select');
 const kMaxGroup = document.getElementById('k-max-group');
 modeSelect.addEventListener('change', () => {
   kMaxGroup.classList.toggle('hidden', modeSelect.value !== 'sweep');
 });
+
+// Update input title with sample count
+const inputTextarea = document.getElementById('input-data');
+const inputTitle = document.getElementById('input-title');
+function updateInputTitle() {
+  const text = inputTextarea.value.trim();
+  if (!text) { inputTitle.textContent = 'Input — G25 Coordinates'; return; }
+  const count = text.split('\n').filter(l => l.trim() && !l.trim().startsWith('#')).length;
+  inputTitle.textContent = count > 0 ? `Input — G25 Coordinates (${count} sample${count !== 1 ? 's' : ''})` : 'Input — G25 Coordinates';
+}
+inputTextarea.addEventListener('input', updateInputTitle);
+inputTextarea.addEventListener('paste', () => setTimeout(updateInputTitle, 0));
 
 function parseG25(text) {
   return text.trim().split('\n').filter(l => l.trim() && !l.trim().startsWith('#')).map(line => {
@@ -592,7 +610,24 @@ function showPlot(samples, result) {
   document.getElementById('plot-panel').classList.remove('hidden');
   document.getElementById('plot-k').textContent = K;
   const pal = PALETTES[document.getElementById('palette-select').value] || PALETTES.classic;
+  const indices = getSorted(samples, result, currentSortMode);
 
+  if (chartOrientation === 'horizontal') {
+    showPlotHorizontal(samples, result, K, N, pal, indices);
+  } else {
+    showPlotVertical(samples, result, K, N, pal, indices);
+  }
+
+  const legend = document.getElementById('legend'); legend.innerHTML = '';
+  for (let k = 0; k < K; k++) {
+    const item = document.createElement('div'); item.className = 'legend-item';
+    const sw = document.createElement('div'); sw.className = 'legend-swatch'; sw.style.background = pal[k % pal.length];
+    const lb = document.createElement('span'); lb.textContent = `Component ${k + 1}`;
+    item.append(sw, lb); legend.appendChild(item);
+  }
+}
+
+function showPlotVertical(samples, result, K, N, pal, indices) {
   const barW = Math.max(Math.min(40, Math.floor(1100 / N)), 6);
   const gap = barW > 10 ? 1 : 0, barH = 220, labelH = 140, xStart = 30;
   const cW = xStart + N * (barW + gap) + 40, cH = barH + labelH + 20;
@@ -603,7 +638,6 @@ function showPlot(samples, result) {
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr); ctx.clearRect(0, 0, cW, cH);
 
-  const indices = getSorted(samples, result, currentSortMode);
   for (let n = 0; n < N; n++) {
     const i = indices[n], x = xStart + n * (barW + gap);
     let y = 10;
@@ -625,14 +659,104 @@ function showPlot(samples, result) {
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillText(samples[i].name, 0, 0); ctx.restore();
   }
+}
 
-  const legend = document.getElementById('legend'); legend.innerHTML = '';
-  for (let k = 0; k < K; k++) {
-    const item = document.createElement('div'); item.className = 'legend-item';
-    const sw = document.createElement('div'); sw.className = 'legend-swatch'; sw.style.background = pal[k % pal.length];
-    const lb = document.createElement('span'); lb.textContent = `Component ${k + 1}`;
-    item.append(sw, lb); legend.appendChild(item);
+function showPlotHorizontal(samples, result, K, N, pal, indices) {
+  const barH = Math.max(Math.min(28, Math.floor(600 / N)), 10);
+  const gap = barH > 14 ? 1 : 0, barW = 500, yStart = 10;
+  // Measure label widths
+  const canvas = document.getElementById('admixture-canvas');
+  const tmpCtx = canvas.getContext('2d');
+  tmpCtx.font = `${Math.min(12, barH - 1)}px 'IBM Plex Mono', monospace`;
+  let maxLabelW = 0;
+  for (let n = 0; n < N; n++) {
+    const w = tmpCtx.measureText(samples[indices[n]].name).width;
+    if (w > maxLabelW) maxLabelW = w;
   }
+  const labelArea = Math.ceil(maxLabelW) + 14;
+  const cW = labelArea + barW + 30;
+  const cH = yStart + N * (barH + gap) + 20;
+
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = cW * dpr; canvas.height = cH * dpr;
+  canvas.style.width = cW + 'px'; canvas.style.height = cH + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr); ctx.clearRect(0, 0, cW, cH);
+
+  ctx.font = `${Math.min(12, barH - 1)}px 'IBM Plex Mono', monospace`;
+  ctx.fillStyle = '#6b7394';
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+
+  for (let n = 0; n < N; n++) {
+    const i = indices[n];
+    const y = yStart + n * (barH + gap);
+    // Label
+    ctx.fillStyle = '#6b7394';
+    ctx.fillText(samples[i].name, labelArea - 8, y + barH / 2);
+    // Stacked bar
+    let x = labelArea;
+    for (let k = 0; k < K; k++) {
+      const w = result.Q[i][k] * barW;
+      if (w < 0.05) continue;
+      ctx.fillStyle = pal[k % pal.length];
+      ctx.fillRect(x, y, w, barH);
+      x += w;
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 0.5;
+    ctx.strokeRect(labelArea, y, barW, barH);
+  }
+}
+
+function setOrientation(o) {
+  chartOrientation = o;
+  document.getElementById('btn-vertical').style.borderColor = o === 'vertical' ? 'var(--accent)' : '';
+  document.getElementById('btn-horizontal').style.borderColor = o === 'horizontal' ? 'var(--accent)' : '';
+  if (currentResult && currentSamples) showPlot(currentSamples, currentResult);
+}
+
+function exportChartJPG() {
+  const canvas = document.getElementById('admixture-canvas');
+  if (!canvas || !currentResult) return;
+  const K = currentResult.Q[0].length;
+  const pal = PALETTES[document.getElementById('palette-select').value] || PALETTES.classic;
+
+  // Build a temp canvas: chart + legend below
+  const legendH = 40;
+  const tmpCanvas = document.createElement('canvas');
+  tmpCanvas.width = canvas.width;
+  tmpCanvas.height = canvas.height + legendH * (window.devicePixelRatio || 1);
+  const tmpCtx = tmpCanvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  // Dark background
+  tmpCtx.fillStyle = '#0c0e13';
+  tmpCtx.fillRect(0, 0, tmpCanvas.width, tmpCanvas.height);
+  // Draw chart
+  tmpCtx.drawImage(canvas, 0, 0);
+  // Draw legend
+  tmpCtx.scale(dpr, dpr);
+  const lY = canvas.height / dpr + 12;
+  let lX = 20;
+  tmpCtx.font = "12px 'IBM Plex Mono', monospace";
+  for (let k = 0; k < K; k++) {
+    tmpCtx.fillStyle = pal[k % pal.length];
+    tmpCtx.fillRect(lX, lY, 12, 12);
+    tmpCtx.fillStyle = '#6b7394';
+    tmpCtx.fillText('Comp ' + (k + 1), lX + 16, lY + 10);
+    lX += tmpCtx.measureText('Comp ' + (k + 1)).width + 30;
+  }
+  tmpCtx.setTransform(1, 0, 0, 1, 0, 0);
+
+  tmpCanvas.toBlob(function(blob) {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'g25_ancestry_K' + K + '.jpg';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, 'image/jpeg', 0.95);
 }
 
 function sortPlot(mode) {
@@ -709,6 +833,7 @@ Japanese,0.071,0.008,-0.003,0.02,0.06,0.032,0.022,-0.028,-0.004,-0.012,-0.009,0.
 Tamil,0.085,0.061,-0.001,-0.01,0.012,-0.015,-0.025,-0.008,0.028,0.015,0.006,-0.005,-0.008,-0.003,0,-0.001,0,0.001,0,0,0,0,0,0,0
 Bengali,0.083,0.054,0.002,-0.004,0.022,-0.008,-0.018,-0.012,0.022,0.01,0.004,-0.003,-0.006,-0.003,-0.001,0,0,0.001,0,0,0,0,0,0,0`;
   setStatus('Sample data loaded — 32 world populations. Try K=4 or sweep K=2–10.', 'ok');
+  updateInputTitle();
 }
 </script>
 </body>
