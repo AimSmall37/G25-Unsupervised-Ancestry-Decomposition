@@ -285,13 +285,44 @@
   <div class="panel hidden" id="centroids-panel">
     <div class="panel-head">
       <h2>Component Centroids — G25 Coordinates</h2>
-      <div style="display:flex; gap:8px;">
+      <div style="display:flex; gap:8px; align-items:center;">
         <button class="btn btn-secondary" onclick="copyCentroids()" style="padding:6px 14px; font-size:11px;">Copy to Clipboard</button>
         <button class="btn btn-secondary" onclick="exportCentroidsCSV()" style="padding:6px 14px; font-size:11px;">Export CSV</button>
       </div>
     </div>
     <div class="panel-body">
-      <p style="font-size:12px; color:var(--text-dim); margin-bottom:12px;">G25 coordinates for each component, computed as the <strong>Q-weighted average</strong> of all input samples — the center of gravity of each component in real G25 space. These can be pasted into Vahaduo or any G25 plotting tool alongside real samples.</p>
+      <p style="font-size:12px; color:var(--text-dim); margin-bottom:12px;">Approximate G25 coordinates for each component, computed as a weighted average of the top-contributing samples. Paste into Vahaduo or any G25 tool alongside real samples.</p>
+      <div style="display:flex; gap:16px; align-items:flex-end; flex-wrap:wrap; margin-bottom:14px;">
+        <div class="control-group">
+          <label>Weight Exponent</label>
+          <input type="number" id="centroid-exponent" value="2" min="1" max="10" step="1" style="width:65px;" onchange="refreshCentroids()">
+        </div>
+        <div class="control-group">
+          <label>Cumulative Weight %</label>
+          <input type="number" id="centroid-cumweight" value="70" min="10" max="100" step="5" style="width:75px;" onchange="refreshCentroids()">
+        </div>
+        <button class="btn btn-secondary" onclick="document.getElementById('centroid-info-popup').classList.toggle('hidden')" style="padding:7px 12px; font-size:11px;">ℹ How This Works</button>
+      </div>
+      <div class="info-box hidden" id="centroid-info-popup" style="margin-bottom:14px;">
+        <strong>Why not use the raw P matrix?</strong><br>
+        The decomposition finds <strong>X ≈ Q·P</strong> where each sample's coordinates are a convex combination (weights summing to 1) of the P rows.
+        For this to work, P rows must form a simplex that <em>encloses</em> all the data — pushing them 3–4× beyond any real population's coordinates.
+        They are mathematically correct for the decomposition but not meaningful as plottable G25 positions.<br><br>
+        <strong>How centroids are computed instead:</strong><br>
+        For each component <em>k</em>, samples are sorted by their Q proportion for that component (highest first). The top samples — those collectively holding
+        the <strong>Cumulative Weight %</strong> of that component's total Q mass — are averaged using Q<sup>n</sup> weights,
+        where <em>n</em> is the <strong>Weight Exponent</strong>. This places each centroid near the real populations that most strongly represent that component.<br><br>
+        <strong style="color:var(--text);">Weight Exponent</strong> (default 2) — How aggressively high-Q samples dominate the average.<br>
+        &nbsp;&nbsp;<code>1</code> = linear weights (broader average, centroids pulled toward center).<br>
+        &nbsp;&nbsp;<code>2</code> = squared weights (good default, balances spread and stability).<br>
+        &nbsp;&nbsp;<code>3–5</code> = increasingly dominated by the top-scoring samples.<br>
+        &nbsp;&nbsp;<code>10</code> = nearly identical to the single highest-Q sample per component.<br><br>
+        <strong style="color:var(--text);">Cumulative Weight %</strong> (default 70%) — How many top samples are included before averaging.<br>
+        &nbsp;&nbsp;<code>100%</code> = all samples contribute (most centered, least spread).<br>
+        &nbsp;&nbsp;<code>50–70%</code> = only the strongest contributors (good spread).<br>
+        &nbsp;&nbsp;<code>10–30%</code> = just the very top samples (most extreme positions, may be noisy with small datasets).<br><br>
+        Both controls update the table and Vahaduo output instantly — experiment to find positions that look right for your dataset and K value.
+      </div>
       <div class="table-scroll" id="centroids-scroll" style="height:auto; max-height:350px;"></div>
       <div style="margin-top:12px;">
         <label style="font-size:11px; font-weight:500; text-transform:uppercase; letter-spacing:0.8px; color:var(--text-dim);">Vahaduo-ready format (copy &amp; paste):</label>
@@ -931,25 +962,50 @@ function exportCSV() {
   a.download = `g25_decomposition_K${K}.csv`; a.click();
 }
 
-function computeWeightedCentroids(samples, result) {
+function computeWeightedCentroids(samples, result, exponent, cumWeightPct) {
   const K = result.Q[0].length;
   const D = samples[0].coords.length;
   const N = samples.length;
+  const targetFrac = cumWeightPct / 100;
+
   const centroids = [];
   for (let k = 0; k < K; k++) {
+    // Sort samples by Q[i][k] descending
+    const qPairs = [];
+    for (let i = 0; i < N; i++) qPairs.push({ q: result.Q[i][k], idx: i });
+    qPairs.sort((a, b) => b.q - a.q);
+
+    // Total Q for this component
+    let totalQ = 0;
+    for (let i = 0; i < N; i++) totalQ += result.Q[i][k];
+    const targetWeight = totalQ * targetFrac;
+
+    // Accumulate top samples until cumulative Q reaches target
     const coords = new Float64Array(D);
-    let totalWeight = 0;
-    for (let i = 0; i < N; i++) {
-      const w = result.Q[i][k];
-      totalWeight += w;
-      for (let d = 0; d < D; d++) coords[d] += w * samples[i].coords[d];
+    let accumulated = 0, usedWeight = 0;
+    for (let j = 0; j < qPairs.length && accumulated < targetWeight; j++) {
+      const { q, idx } = qPairs[j];
+      const w = Math.pow(q, exponent);
+      usedWeight += w;
+      for (let d = 0; d < D; d++) coords[d] += w * samples[idx].coords[d];
+      accumulated += q;
     }
-    if (totalWeight > 0) {
-      for (let d = 0; d < D; d++) coords[d] /= totalWeight;
+    if (usedWeight > 0) {
+      for (let d = 0; d < D; d++) coords[d] /= usedWeight;
     }
     centroids.push(coords);
   }
   return centroids;
+}
+
+function getCentroidParams() {
+  const exponent = Math.max(1, Math.min(10, parseInt(document.getElementById('centroid-exponent').value) || 2));
+  const cumWeight = Math.max(10, Math.min(100, parseInt(document.getElementById('centroid-cumweight').value) || 70));
+  return { exponent, cumWeight };
+}
+
+function refreshCentroids() {
+  if (currentResult && currentSamples) showCentroids(currentSamples, currentResult);
 }
 
 function showCentroids(samples, result) {
@@ -957,8 +1013,8 @@ function showCentroids(samples, result) {
   const D = samples[0].coords.length;
   document.getElementById('centroids-panel').classList.remove('hidden');
   const pal = PALETTES[document.getElementById('palette-select').value] || PALETTES.classic;
-
-  const centroids = computeWeightedCentroids(samples, result);
+  const { exponent, cumWeight } = getCentroidParams();
+  const centroids = computeWeightedCentroids(samples, result, exponent, cumWeight);
 
   // Build table
   let html = '<table class="component-table"><thead><tr><th>Component</th>';
@@ -1000,7 +1056,8 @@ function exportCentroidsCSV() {
   if (!currentResult || !currentSamples) return;
   const K = currentResult.Q[0].length;
   const D = currentSamples[0].coords.length;
-  const centroids = computeWeightedCentroids(currentSamples, currentResult);
+  const { exponent, cumWeight } = getCentroidParams();
+  const centroids = computeWeightedCentroids(currentSamples, currentResult, exponent, cumWeight);
   let csv = 'Component';
   for (let d = 0; d < D; d++) csv += `,Coord_${d + 1}`;
   csv += '\n';
