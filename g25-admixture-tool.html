@@ -291,7 +291,7 @@
       </div>
     </div>
     <div class="panel-body">
-      <p style="font-size:12px; color:var(--text-dim); margin-bottom:12px;">These are the P matrix rows — the G25 coordinates of each discovered ancestral component centroid. They can be pasted directly into Vahaduo or any G25 tool alongside real samples.</p>
+      <p style="font-size:12px; color:var(--text-dim); margin-bottom:12px;">G25 coordinates for each component, computed as the <strong>Q-weighted average</strong> of all input samples — the center of gravity of each component in real G25 space. These can be pasted into Vahaduo or any G25 plotting tool alongside real samples.</p>
       <div class="table-scroll" id="centroids-scroll" style="height:auto; max-height:350px;"></div>
       <div style="margin-top:12px;">
         <label style="font-size:11px; font-weight:500; text-transform:uppercase; letter-spacing:0.8px; color:var(--text-dim);">Vahaduo-ready format (copy &amp; paste):</label>
@@ -931,11 +931,34 @@ function exportCSV() {
   a.download = `g25_decomposition_K${K}.csv`; a.click();
 }
 
+function computeWeightedCentroids(samples, result) {
+  const K = result.Q[0].length;
+  const D = samples[0].coords.length;
+  const N = samples.length;
+  const centroids = [];
+  for (let k = 0; k < K; k++) {
+    const coords = new Float64Array(D);
+    let totalWeight = 0;
+    for (let i = 0; i < N; i++) {
+      const w = result.Q[i][k];
+      totalWeight += w;
+      for (let d = 0; d < D; d++) coords[d] += w * samples[i].coords[d];
+    }
+    if (totalWeight > 0) {
+      for (let d = 0; d < D; d++) coords[d] /= totalWeight;
+    }
+    centroids.push(coords);
+  }
+  return centroids;
+}
+
 function showCentroids(samples, result) {
   const K = result.Q[0].length;
-  const D = result.P[0].length;
+  const D = samples[0].coords.length;
   document.getElementById('centroids-panel').classList.remove('hidden');
   const pal = PALETTES[document.getElementById('palette-select').value] || PALETTES.classic;
+
+  const centroids = computeWeightedCentroids(samples, result);
 
   // Build table
   let html = '<table class="component-table"><thead><tr><th>Component</th>';
@@ -944,7 +967,7 @@ function showCentroids(samples, result) {
   for (let k = 0; k < K; k++) {
     html += `<tr><td><span style="color:${pal[k % pal.length]}">■</span> Component ${k + 1}</td>`;
     for (let d = 0; d < D; d++) {
-      html += `<td>${result.P[k][d].toFixed(4)}</td>`;
+      html += `<td>${centroids[k][d].toFixed(6)}</td>`;
     }
     html += '</tr>';
   }
@@ -955,7 +978,7 @@ function showCentroids(samples, result) {
   let vahaduo = '';
   for (let k = 0; k < K; k++) {
     vahaduo += `Component_${k + 1}`;
-    for (let d = 0; d < D; d++) vahaduo += ',' + result.P[k][d].toFixed(4);
+    for (let d = 0; d < D; d++) vahaduo += ',' + centroids[k][d].toFixed(6);
     vahaduo += '\n';
   }
   document.getElementById('centroids-vahaduo').value = vahaduo.trim();
@@ -974,15 +997,16 @@ function copyCentroids() {
 }
 
 function exportCentroidsCSV() {
-  if (!currentResult) return;
+  if (!currentResult || !currentSamples) return;
   const K = currentResult.Q[0].length;
-  const D = currentResult.P[0].length;
+  const D = currentSamples[0].coords.length;
+  const centroids = computeWeightedCentroids(currentSamples, currentResult);
   let csv = 'Component';
   for (let d = 0; d < D; d++) csv += `,Coord_${d + 1}`;
   csv += '\n';
   for (let k = 0; k < K; k++) {
     csv += `Component_${k + 1}`;
-    for (let d = 0; d < D; d++) csv += ',' + currentResult.P[k][d].toFixed(6);
+    for (let d = 0; d < D; d++) csv += ',' + centroids[k][d].toFixed(6);
     csv += '\n';
   }
   const a = document.createElement('a');
