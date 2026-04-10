@@ -256,7 +256,14 @@
         <span style="font-size:11px; color:var(--text-dim); margin-left:8px;">Layout:</span>
         <button class="btn btn-secondary" id="btn-vertical" onclick="setOrientation('vertical')" style="border-color:var(--accent);">Vertical</button>
         <button class="btn btn-secondary" id="btn-horizontal" onclick="setOrientation('horizontal')">Horizontal</button>
-        <button class="btn btn-secondary" onclick="exportChartJPG()" style="margin-left:8px;">Export JPG</button>
+        <span style="position:relative; display:inline-block; margin-left:8px;">
+          <button class="btn btn-secondary" onclick="toggleExportMenu()" id="export-menu-btn">Export ▾</button>
+          <div id="export-menu" style="display:none; position:absolute; top:100%; right:0; margin-top:4px; background:#1a1e2a; border:1px solid #2a2f3d; border-radius:6px; z-index:100; min-width:120px; overflow:hidden; box-shadow:0 4px 12px rgba(0,0,0,0.4);">
+            <div onclick="exportChart('png')" style="padding:7px 14px; cursor:pointer; font-size:12px; color:#c0c8e4; font-family:'IBM Plex Mono',monospace;" onmouseover="this.style.background='#252a38'" onmouseout="this.style.background='none'">PNG</div>
+            <div onclick="exportChart('jpg')" style="padding:7px 14px; cursor:pointer; font-size:12px; color:#c0c8e4; font-family:'IBM Plex Mono',monospace;" onmouseover="this.style.background='#252a38'" onmouseout="this.style.background='none'">JPG</div>
+            <div onclick="exportChart('svg')" style="padding:7px 14px; cursor:pointer; font-size:12px; color:#c0c8e4; font-family:'IBM Plex Mono',monospace;" onmouseover="this.style.background='#252a38'" onmouseout="this.style.background='none'">SVG</div>
+          </div>
+        </span>
       </div>
     </div>
     <div class="panel-body">
@@ -714,25 +721,32 @@ function setOrientation(o) {
   if (currentResult && currentSamples) showPlot(currentSamples, currentResult);
 }
 
-function exportChartJPG() {
+function toggleExportMenu() {
+  const menu = document.getElementById('export-menu');
+  menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+}
+document.addEventListener('click', function(e) {
+  const menu = document.getElementById('export-menu');
+  const btn = document.getElementById('export-menu-btn');
+  if (menu && btn && !btn.contains(e.target) && !menu.contains(e.target)) {
+    menu.style.display = 'none';
+  }
+});
+
+function buildExportCanvas() {
   const canvas = document.getElementById('admixture-canvas');
-  if (!canvas || !currentResult) return;
+  if (!canvas || !currentResult) return null;
   const K = currentResult.Q[0].length;
   const pal = PALETTES[document.getElementById('palette-select').value] || PALETTES.classic;
-
-  // Build a temp canvas: chart + legend below
   const legendH = 40;
   const tmpCanvas = document.createElement('canvas');
   tmpCanvas.width = canvas.width;
   tmpCanvas.height = canvas.height + legendH * (window.devicePixelRatio || 1);
   const tmpCtx = tmpCanvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
-  // Dark background
   tmpCtx.fillStyle = '#0c0e13';
   tmpCtx.fillRect(0, 0, tmpCanvas.width, tmpCanvas.height);
-  // Draw chart
   tmpCtx.drawImage(canvas, 0, 0);
-  // Draw legend
   tmpCtx.scale(dpr, dpr);
   const lY = canvas.height / dpr + 12;
   let lX = 20;
@@ -745,18 +759,118 @@ function exportChartJPG() {
     lX += tmpCtx.measureText('Comp ' + (k + 1)).width + 30;
   }
   tmpCtx.setTransform(1, 0, 0, 1, 0, 0);
+  return { canvas: tmpCanvas, K };
+}
 
+function exportChart(format) {
+  document.getElementById('export-menu').style.display = 'none';
+  if (format === 'svg') { exportChartSVG(); return; }
+  const built = buildExportCanvas();
+  if (!built) return;
+  const { canvas: tmpCanvas, K } = built;
+  const mimeType = format === 'png' ? 'image/png' : 'image/jpeg';
+  const ext = format === 'png' ? 'png' : 'jpg';
+  const quality = format === 'png' ? undefined : 0.95;
   tmpCanvas.toBlob(function(blob) {
     if (!blob) return;
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'g25_ancestry_K' + K + '.jpg';
+    a.download = 'g25_ancestry_K' + K + '.' + ext;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }, 'image/jpeg', 0.95);
+  }, mimeType, quality);
+}
+
+function exportChartSVG() {
+  if (!currentResult || !currentSamples) return;
+  const K = currentResult.Q[0].length;
+  const N = currentSamples.length;
+  const pal = PALETTES[document.getElementById('palette-select').value] || PALETTES.classic;
+  const indices = getSorted(currentSamples, currentResult, currentSortMode);
+  const isVertical = chartOrientation === 'vertical';
+
+  let svgParts = [];
+  let svgW, svgH;
+
+  if (isVertical) {
+    const barW = Math.max(Math.min(40, Math.floor(1100 / N)), 6);
+    const gap = barW > 10 ? 1 : 0, barH = 220, labelH = 140, xStart = 30;
+    svgW = xStart + N * (barW + gap) + 40;
+    svgH = barH + labelH + 60;
+
+    for (let n = 0; n < N; n++) {
+      const i = indices[n], x = xStart + n * (barW + gap);
+      let y = 10;
+      for (let k = 0; k < K; k++) {
+        const h = currentResult.Q[i][k] * barH;
+        if (h < 0.05) continue;
+        svgParts.push(`<rect x="${x}" y="${y}" width="${barW}" height="${h}" fill="${pal[k % pal.length]}"/>`);
+        y += h;
+      }
+      svgParts.push(`<rect x="${x}" y="10" width="${barW}" height="${barH}" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="0.5"/>`);
+      const tx = x + barW / 2;
+      const fontSize = Math.min(11, barW - 1);
+      svgParts.push(`<text x="${tx}" y="${barH + 16}" font-size="${fontSize}" fill="#6b7394" font-family="'IBM Plex Mono',monospace" transform="rotate(90,${tx},${barH + 16})" text-anchor="start" dominant-baseline="central">${escSvg(currentSamples[i].name)}</text>`);
+    }
+    // Legend
+    let lX = 20, lY = barH + labelH + 10;
+    for (let k = 0; k < K; k++) {
+      svgParts.push(`<rect x="${lX}" y="${lY}" width="12" height="12" fill="${pal[k % pal.length]}"/>`);
+      svgParts.push(`<text x="${lX + 16}" y="${lY + 10}" font-size="12" fill="#6b7394" font-family="'IBM Plex Mono',monospace">Comp ${k + 1}</text>`);
+      lX += 12 + 16 + ('Comp ' + (k + 1)).length * 7.2 + 14;
+    }
+  } else {
+    const barH = Math.max(Math.min(28, Math.floor(600 / N)), 10);
+    const gap = barH > 14 ? 1 : 0, barW = 500, yStart = 10;
+    const maxLabelW = Math.max(...currentSamples.map(s => s.name.length)) * 7.2 + 14;
+    const labelArea = Math.ceil(maxLabelW);
+    svgW = labelArea + barW + 30;
+    svgH = yStart + N * (barH + gap) + 60;
+
+    const fontSize = Math.min(12, barH - 1);
+    for (let n = 0; n < N; n++) {
+      const i = indices[n];
+      const y = yStart + n * (barH + gap);
+      svgParts.push(`<text x="${labelArea - 8}" y="${y + barH / 2}" font-size="${fontSize}" fill="#6b7394" font-family="'IBM Plex Mono',monospace" text-anchor="end" dominant-baseline="central">${escSvg(currentSamples[i].name)}</text>`);
+      let x = labelArea;
+      for (let k = 0; k < K; k++) {
+        const w = currentResult.Q[i][k] * barW;
+        if (w < 0.05) continue;
+        svgParts.push(`<rect x="${x}" y="${y}" width="${w}" height="${barH}" fill="${pal[k % pal.length]}"/>`);
+        x += w;
+      }
+      svgParts.push(`<rect x="${labelArea}" y="${y}" width="${barW}" height="${barH}" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="0.5"/>`);
+    }
+    // Legend
+    let lX = labelArea, lY = yStart + N * (barH + gap) + 16;
+    for (let k = 0; k < K; k++) {
+      svgParts.push(`<rect x="${lX}" y="${lY}" width="12" height="12" fill="${pal[k % pal.length]}"/>`);
+      svgParts.push(`<text x="${lX + 16}" y="${lY + 10}" font-size="12" fill="#6b7394" font-family="'IBM Plex Mono',monospace">Comp ${k + 1}</text>`);
+      lX += 12 + 16 + ('Comp ' + (k + 1)).length * 7.2 + 14;
+    }
+  }
+
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">
+<rect width="100%" height="100%" fill="#0c0e13"/>
+${svgParts.join('\n')}
+</svg>`;
+  const blob = new Blob([svg], { type: 'image/svg+xml' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'g25_ancestry_K' + K + '.svg';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function escSvg(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function sortPlot(mode) {
