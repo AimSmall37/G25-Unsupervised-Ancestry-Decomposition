@@ -282,6 +282,24 @@
     </div>
   </div>
 
+  <div class="panel hidden" id="centroids-panel">
+    <div class="panel-head">
+      <h2>Component Centroids — G25 Coordinates</h2>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-secondary" onclick="copyCentroids()" style="padding:6px 14px; font-size:11px;">Copy to Clipboard</button>
+        <button class="btn btn-secondary" onclick="exportCentroidsCSV()" style="padding:6px 14px; font-size:11px;">Export CSV</button>
+      </div>
+    </div>
+    <div class="panel-body">
+      <p style="font-size:12px; color:var(--text-dim); margin-bottom:12px;">These are the P matrix rows — the G25 coordinates of each discovered ancestral component centroid. They can be pasted directly into Vahaduo or any G25 tool alongside real samples.</p>
+      <div class="table-scroll" id="centroids-scroll" style="height:auto; max-height:350px;"></div>
+      <div style="margin-top:12px;">
+        <label style="font-size:11px; font-weight:500; text-transform:uppercase; letter-spacing:0.8px; color:var(--text-dim);">Vahaduo-ready format (copy &amp; paste):</label>
+        <textarea id="centroids-vahaduo" readonly style="height:120px; margin-top:6px; cursor:text; font-size:11px;" onclick="this.select()"></textarea>
+      </div>
+    </div>
+  </div>
+
   <div class="panel">
     <div class="panel-head"><h2>Method Notes</h2></div>
     <div class="panel-body">
@@ -565,7 +583,7 @@ async function runAnalysis() {
     showErrorChart(results, bestIdx);
     currentResult = results[bestIdx];
     setStatus(`Done. Showing K=${results[bestIdx].k}. Click bars to compare.`, 'ok');
-    showPlot(samples, currentResult); showTable(samples, currentResult);
+    showPlot(samples, currentResult); showTable(samples, currentResult); showCentroids(samples, currentResult);
   } else {
     const K = Math.min(parseInt(document.getElementById('k-val').value) || 4, samples.length - 1);
     setStatus(`Running K=${K} (${nRuns} restarts)...`);
@@ -573,7 +591,7 @@ async function runAnalysis() {
     currentResult = { k: K, ...bestOfRuns(data, K, maxIter, nRuns) };
     document.getElementById('bic-panel').classList.add('hidden');
     setStatus(`Done. K=${K}, MSE=${currentResult.error.toExponential(3)}`, 'ok');
-    showPlot(samples, currentResult); showTable(samples, currentResult);
+    showPlot(samples, currentResult); showTable(samples, currentResult); showCentroids(samples, currentResult);
   }
   document.getElementById('run-btn').disabled = false;
 }
@@ -593,7 +611,7 @@ function showErrorChart(results, bestIdx) {
     bar.style.background = i === bestIdx ? 'var(--accent)' : 'var(--surface2)';
     bar.style.border = i === bestIdx ? 'none' : '1px solid var(--border)';
     bar.title = `K=${r.k}`;
-    wrap.onclick = () => { currentResult = r; showPlot(currentSamples, r); showTable(currentSamples, r); };
+    wrap.onclick = () => { currentResult = r; showPlot(currentSamples, r); showTable(currentSamples, r); showCentroids(currentSamples, r); };
     const label = document.createElement('div'); label.className = 'bic-label'; label.textContent = 'K=' + r.k;
     if (i === bestIdx) label.style.color = 'var(--accent)';
     wrap.append(val, bar, label); c.appendChild(wrap);
@@ -911,6 +929,66 @@ function exportCSV() {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
   a.download = `g25_decomposition_K${K}.csv`; a.click();
+}
+
+function showCentroids(samples, result) {
+  const K = result.Q[0].length;
+  const D = result.P[0].length;
+  document.getElementById('centroids-panel').classList.remove('hidden');
+  const pal = PALETTES[document.getElementById('palette-select').value] || PALETTES.classic;
+
+  // Build table
+  let html = '<table class="component-table"><thead><tr><th>Component</th>';
+  for (let d = 0; d < D; d++) html += `<th>Coord ${d + 1}</th>`;
+  html += '</tr></thead><tbody>';
+  for (let k = 0; k < K; k++) {
+    html += `<tr><td><span style="color:${pal[k % pal.length]}">■</span> Component ${k + 1}</td>`;
+    for (let d = 0; d < D; d++) {
+      html += `<td>${result.P[k][d].toFixed(4)}</td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  document.getElementById('centroids-scroll').innerHTML = html;
+
+  // Build Vahaduo-ready text
+  let vahaduo = '';
+  for (let k = 0; k < K; k++) {
+    vahaduo += `Component_${k + 1}`;
+    for (let d = 0; d < D; d++) vahaduo += ',' + result.P[k][d].toFixed(4);
+    vahaduo += '\n';
+  }
+  document.getElementById('centroids-vahaduo').value = vahaduo.trim();
+}
+
+function copyCentroids() {
+  const ta = document.getElementById('centroids-vahaduo');
+  if (!ta.value) return;
+  navigator.clipboard.writeText(ta.value).then(() => {
+    setStatus('Component centroids copied to clipboard.', 'ok');
+  }).catch(() => {
+    ta.select();
+    document.execCommand('copy');
+    setStatus('Component centroids copied to clipboard.', 'ok');
+  });
+}
+
+function exportCentroidsCSV() {
+  if (!currentResult) return;
+  const K = currentResult.Q[0].length;
+  const D = currentResult.P[0].length;
+  let csv = 'Component';
+  for (let d = 0; d < D; d++) csv += `,Coord_${d + 1}`;
+  csv += '\n';
+  for (let k = 0; k < K; k++) {
+    csv += `Component_${k + 1}`;
+    for (let d = 0; d < D; d++) csv += ',' + currentResult.P[k][d].toFixed(6);
+    csv += '\n';
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = `g25_centroids_K${K}.csv`;
+  a.click();
 }
 
 function loadSample() {
