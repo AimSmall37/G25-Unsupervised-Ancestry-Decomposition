@@ -160,7 +160,7 @@ Open `g25-admixture-tool.html` in any modern browser (Chrome, Firefox, Safari, E
 
 ## License
 
-MIT
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
 
 ---
 
