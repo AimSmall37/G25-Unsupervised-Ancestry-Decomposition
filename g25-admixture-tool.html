@@ -331,6 +331,30 @@
     </div>
   </div>
 
+  <div class="panel hidden" id="interpret-panel">
+    <div class="panel-head">
+      <h2>Interpret with AI</h2>
+      <button class="btn btn-secondary" onclick="copyInterpretPrompt()" style="padding:6px 14px; font-size:11px;" id="copy-prompt-btn">Copy Prompt to Clipboard</button>
+    </div>
+    <div class="panel-body">
+      <div class="info-box" style="margin-bottom:14px;">
+        <strong>What is this?</strong> The decomposition discovers latent components, but doesn't tell you what they
+        represent in population-genetic terms. An LLM (like <a href="https://claude.ai" target="_blank" style="color:var(--accent);">Claude</a>,
+        ChatGPT, Gemini, etc.) can interpret the component patterns by recognizing which populations load highest on each
+        component and mapping that to known ancestral structure.<br><br>
+        <strong>How to use:</strong> Click <em>Generate Prompt</em> below. The tool will summarize your decomposition results
+        into a structured prompt. Copy it, paste it into any LLM chat, and ask it to interpret the components. The prompt
+        includes the population-level averages and top-scoring samples for each component — everything the LLM needs to
+        identify what each component likely represents (e.g., "Near Eastern Farmer," "Western Hunter-Gatherer," "East Asian,"
+        etc.).<br><br>
+        <strong>Which LLM?</strong> Any capable LLM will work. Claude, ChatGPT, and Gemini all have sufficient knowledge of
+        population genetics and ancient DNA to interpret G25 ancestry components. Free tiers of each are sufficient.
+      </div>
+      <button class="btn" onclick="generateInterpretPrompt()" style="margin-bottom:14px;">Generate Prompt</button>
+      <textarea id="interpret-prompt" readonly style="height:300px; cursor:text; font-size:11px; display:none;" onclick="this.select()"></textarea>
+    </div>
+  </div>
+
   <div class="panel">
     <div class="panel-head"><h2>Method Notes</h2></div>
     <div class="panel-body">
@@ -614,7 +638,7 @@ async function runAnalysis() {
     showErrorChart(results, bestIdx);
     currentResult = results[bestIdx];
     setStatus(`Done. Showing K=${results[bestIdx].k}. Click bars to compare.`, 'ok');
-    showPlot(samples, currentResult); showTable(samples, currentResult); showCentroids(samples, currentResult);
+    showPlot(samples, currentResult); showTable(samples, currentResult); showCentroids(samples, currentResult); showInterpretPanel();
   } else {
     const K = Math.min(parseInt(document.getElementById('k-val').value) || 4, samples.length - 1);
     setStatus(`Running K=${K} (${nRuns} restarts)...`);
@@ -622,7 +646,7 @@ async function runAnalysis() {
     currentResult = { k: K, ...bestOfRuns(data, K, maxIter, nRuns) };
     document.getElementById('bic-panel').classList.add('hidden');
     setStatus(`Done. K=${K}, MSE=${currentResult.error.toExponential(3)}`, 'ok');
-    showPlot(samples, currentResult); showTable(samples, currentResult); showCentroids(samples, currentResult);
+    showPlot(samples, currentResult); showTable(samples, currentResult); showCentroids(samples, currentResult); showInterpretPanel();
   }
   document.getElementById('run-btn').disabled = false;
 }
@@ -642,7 +666,7 @@ function showErrorChart(results, bestIdx) {
     bar.style.background = i === bestIdx ? 'var(--accent)' : 'var(--surface2)';
     bar.style.border = i === bestIdx ? 'none' : '1px solid var(--border)';
     bar.title = `K=${r.k}`;
-    wrap.onclick = () => { currentResult = r; showPlot(currentSamples, r); showTable(currentSamples, r); showCentroids(currentSamples, r); };
+    wrap.onclick = () => { currentResult = r; showPlot(currentSamples, r); showTable(currentSamples, r); showCentroids(currentSamples, r); showInterpretPanel(); };
     const label = document.createElement('div'); label.className = 'bic-label'; label.textContent = 'K=' + r.k;
     if (i === bestIdx) label.style.color = 'var(--accent)';
     wrap.append(val, bar, label); c.appendChild(wrap);
@@ -1070,6 +1094,102 @@ function exportCentroidsCSV() {
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
   a.download = `g25_centroids_K${K}.csv`;
   a.click();
+}
+
+function showInterpretPanel() {
+  document.getElementById('interpret-panel').classList.remove('hidden');
+  // Reset prompt when K changes
+  document.getElementById('interpret-prompt').value = '';
+  document.getElementById('interpret-prompt').style.display = 'none';
+}
+
+function generateInterpretPrompt() {
+  if (!currentResult || !currentSamples) return;
+  const K = currentResult.Q[0].length;
+  const N = currentSamples.length;
+
+  // Build population group averages
+  const groups = {};
+  for (let i = 0; i < N; i++) {
+    const name = currentSamples[i].name;
+    // Use the full name as the group label — users may have custom labels
+    const label = name;
+    if (!groups[label]) groups[label] = { indices: [], label };
+    groups[label].indices.push(i);
+  }
+
+  // Compute averages per group
+  let groupSummary = '';
+  const groupLabels = Object.keys(groups).sort();
+  // Header
+  groupSummary += 'Sample'.padEnd(45);
+  for (let k = 0; k < K; k++) groupSummary += ('C' + (k+1)).padStart(8);
+  groupSummary += '\n' + '-'.repeat(45 + K * 8) + '\n';
+
+  for (const label of groupLabels) {
+    const g = groups[label];
+    const avgs = [];
+    for (let k = 0; k < K; k++) {
+      let sum = 0;
+      for (const idx of g.indices) sum += currentResult.Q[idx][k];
+      avgs.push((sum / g.indices.length * 100).toFixed(1));
+    }
+    groupSummary += label.substring(0, 44).padEnd(45);
+    for (let k = 0; k < K; k++) groupSummary += avgs[k].padStart(8);
+    groupSummary += '\n';
+  }
+
+  // Build top-5 samples per component
+  let topSamples = '';
+  for (let k = 0; k < K; k++) {
+    topSamples += `\nComponent ${k+1} — Top 5 samples:\n`;
+    const sorted = Array.from({length: N}, (_, i) => i)
+      .sort((a, b) => currentResult.Q[b][k] - currentResult.Q[a][k]);
+    for (let j = 0; j < Math.min(5, N); j++) {
+      const idx = sorted[j];
+      const pct = (currentResult.Q[idx][k] * 100).toFixed(1);
+      topSamples += `  ${pct}%  ${currentSamples[idx].name}\n`;
+    }
+    // Also show bottom 2
+    topSamples += `  Lowest:\n`;
+    for (let j = N - 1; j >= Math.max(0, N - 2); j--) {
+      const idx = sorted[j];
+      const pct = (currentResult.Q[idx][k] * 100).toFixed(1);
+      topSamples += `  ${pct}%  ${currentSamples[idx].name}\n`;
+    }
+  }
+
+  const prompt = `I ran an unsupervised ancestry decomposition (ADMIXTURE-style ALS factorization) on G25 scaled PCA coordinates with K=${K} components. G25 coordinates are 25-dimensional scaled PCA projections that capture the major axes of human genetic variation, created by Davidski at the Eurogenes blog.
+
+The decomposition finds X ≈ Q·P where Q holds per-sample ancestry proportions (each row sums to 100%) and P holds component centroids in G25 space. No source populations were predefined — the components emerged unsupervised from the data.
+
+Below are the results. Please interpret what each of the ${K} components most likely represents in population-genetic terms. For each component, identify the ancestral population or lineage it corresponds to (e.g., "Western Hunter-Gatherer," "Near Eastern Farmer," "East Asian," "Sub-Saharan African," "Ancient North Eurasian," etc.) based on which samples load highest on it. Focus primarily on the top-scoring samples for each component, but use the broader pattern of how the component is distributed across all populations to refine your interpretation.
+
+=== COMPONENT PROPORTIONS BY SAMPLE (%) ===
+
+${groupSummary}
+=== TOP AND BOTTOM SAMPLES PER COMPONENT ===
+${topSamples}
+Please provide a brief interpretation of each component — what ancestral signal it most likely captures and why you think so based on the population distribution pattern.`;
+
+  const ta = document.getElementById('interpret-prompt');
+  ta.value = prompt;
+  ta.style.display = 'block';
+  setStatus(`Interpretation prompt generated (${prompt.length.toLocaleString()} chars). Copy and paste into any LLM.`, 'ok');
+}
+
+function copyInterpretPrompt() {
+  const ta = document.getElementById('interpret-prompt');
+  if (!ta.value) {
+    generateInterpretPrompt();
+  }
+  navigator.clipboard.writeText(ta.value).then(() => {
+    setStatus('Interpretation prompt copied to clipboard. Paste into Claude, ChatGPT, or any LLM.', 'ok');
+  }).catch(() => {
+    ta.select();
+    document.execCommand('copy');
+    setStatus('Interpretation prompt copied to clipboard. Paste into Claude, ChatGPT, or any LLM.', 'ok');
+  });
 }
 
 function loadSample() {

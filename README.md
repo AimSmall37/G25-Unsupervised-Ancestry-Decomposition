@@ -138,6 +138,47 @@ When running a K sweep, the tool displays a bar chart of mean squared reconstruc
 
 ---
 
+## Interpreting Results with AI
+![Interpret K=10 components to understand which populations might represent the clusters.  Creates a LLM prompt.](decomposition_interpret_with_ai.jpg)
+
+The decomposition discovers latent components, but doesn't tell you *what* they represent. A component that peaks at 45% in Yoruba and Dinka samples is clearly capturing Sub-Saharan African ancestry — but recognizing that requires knowledge of population genetics that the algorithm doesn't have.
+
+An LLM (large language model) like [Claude](https://claude.ai), [ChatGPT](https://chat.openai.com), or [Gemini](https://gemini.google.com) can interpret the components by recognizing which populations load highest on each one and mapping those patterns to known ancestral structure from the ancient DNA literature.
+
+### Built-in prompt generator
+
+After running a decomposition, an **Interpret with AI** panel appears below the results. Click **Generate Prompt** and the tool will automatically build a structured prompt that summarizes your decomposition — population-level averages and top-scoring samples for each component — formatted for any LLM to interpret. Copy the prompt, paste it into your preferred LLM, and it will identify what each component likely represents.
+
+### Doing it manually
+
+If you prefer, you can export the CSV and write your own prompt. Here is an example you can adapt:
+
+```
+I ran an unsupervised ancestry decomposition on G25 scaled PCA coordinates
+with K=6 components. G25 coordinates are 25-dimensional scaled PCA projections
+that capture the major axes of human genetic variation.
+
+No source populations were predefined — the components emerged unsupervised.
+Below are the component proportions for each sample (percentages, rows sum
+to 100%).
+
+[paste CSV contents here]
+
+Please interpret what each of the 6 components most likely represents in
+population-genetic terms (e.g., "Western Hunter-Gatherer," "Near Eastern
+Farmer," "East Asian," etc.) based on which samples load highest on each
+component.
+```
+
+### Tips for better interpretations
+
+- **Include population labels that are informative.** "Yoruba" and "Han_Chinese" give the LLM far more to work with than "Sample_001" and "Sample_002." If your samples are labeled with population names, the interpretation will be much richer.
+- **Mention the K value and any context about your dataset.** If your samples are all European, say so — the LLM can calibrate its interpretation accordingly.
+- **Ask follow-up questions.** Once the LLM has identified the components, you can ask things like "Which of my samples show the most Near Eastern Farmer ancestry?" or "What does the split between Component 3 and Component 5 correspond to historically?"
+- **Any capable LLM will work.** The free tiers of Claude, ChatGPT, and Gemini all have sufficient knowledge of population genetics, ancient DNA, and the G25 coordinate system to produce useful interpretations.
+
+---
+
 ## Technical Notes
 
 - **Why not GMM?** A Gaussian Mixture Model in 25 dimensions with a small number of samples will place a Gaussian component directly on top of each cluster and drive posterior responsibilities to 100%/0%, producing hard assignments rather than soft mixtures. The simplex-constrained matrix factorization used here avoids this by construction.
