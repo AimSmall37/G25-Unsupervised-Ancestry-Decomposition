@@ -1,68 +1,60 @@
 # G25 → Unsupervised Ancestry Decomposition
 
-A browser-based tool that performs unsupervised ancestry decomposition on [Global25 (G25)](https://eurogenes.blogspot.com/2025/02/g25-available-again.html) scaled PCA coordinates — producing ADMIXTURE-style stacked bar plots and mixture proportions without any predefined source populations.
+A browser-based tool that estimates ancestry mixtures from [Global25 (G25)](https://eurogenes.blogspot.com/2025/02/g25-available-again.html) PCA coordinates, producing the same kind of stacked bar charts you'd get from ADMIXTURE — but without telling it which populations to look for ahead of time.
 
-No installation, no server, no dependencies. Open the HTML file in any modern browser.
+No installation, no server, nothing to configure. Open the HTML file in any modern browser and it works.
 
 ![K=4 decomposition of 32 world populations showing genuine soft ancestry mixtures across European, Near Eastern, East Asian, and Sub-Saharan components](screenshot.png)
 
 ---
 
-## Purpose
+## What this actually does
 
-[ADMIXTURE](https://dalexander.github.io/admixture/) and [STRUCTURE](https://web.stanford.edu/group/pritchardlab/structure.html) are the standard tools for decomposing individuals into K ancestral components from raw genotype data. They operate on hundreds of thousands of SNPs and model population-genetic processes (Hardy-Weinberg equilibrium, linkage equilibrium within clusters).
+If you've used a tool like ADMIXTURE before, you already know the output: a chart where each person is a bar, and the bar is divided into colored segments — "40% this, 30% that, 30% the other thing." What you might not know is how much heavy machinery normally goes into producing that chart. ADMIXTURE and STRUCTURE work directly on raw genotypes, hundreds of thousands of SNPs, and they lean on real population-genetics assumptions like Hardy-Weinberg equilibrium to do it.
 
-This tool asks a different question: **can we achieve analogous results starting from G25 coordinates alone?** G25 coordinates are 25-dimensional scaled PCA projections that already capture the major axes of human genetic variation. By factorizing this coordinate matrix into latent components and per-sample mixture proportions, we can recover ancestry structure directly — letting clusters emerge from the data without specifying source populations.
+This tool skips all of that. It starts from G25 coordinates instead — 25 numbers per person that are already a compressed, PCA-based summary of genetic variation — and asks whether ancestry structure can be recovered from that compressed representation alone, with no reference populations chosen in advance. The components just have to emerge from the data.
 
-This is useful when you want to:
+That's useful if you want to:
 
-- Explore population structure in a set of G25 samples without choosing reference populations
-- Quickly prototype or sanity-check ADMIXTURE-like analyses without running the full genotype pipeline
-- Visualize how populations relate to each other as mixtures of discovered components
-- Experiment with different K values interactively
+- Poke at population structure in a batch of G25 samples without picking reference groups first
+- Sanity-check what an ADMIXTURE run might show, without running the actual genotype pipeline
+- See how populations relate to each other as mixtures rather than fixed categories
+- Try different K values (number of components) interactively and watch the structure shift
 
-### What this is not
+### What it isn't
 
-This tool does **not** replace SNP-based ADMIXTURE. It operates in a reduced 25-dimensional PCA space rather than on raw allele frequencies, so it has no explicit population-genetic model (no HWE, no LD assumptions). The discovered components are geometric directions in PCA space, not literal ancestral populations. Fine-scale structure that requires hundreds of thousands of SNPs to resolve may be lost. Results are analogous in spirit but not identical to SNP-based runs.
+This is not a replacement for SNP-based ADMIXTURE, and it won't pretend to be. It works in a reduced 25-dimensional space, not on allele frequencies, so there's no population-genetic model underneath it — no HWE, no linkage assumptions. The "components" it finds are directions in PCA space, not literal ancestral populations, and any fine-scale structure that needs hundreds of thousands of SNPs to resolve simply isn't there to find. Treat the results as analogous to a real ADMIXTURE run, not identical to one.
 
 ---
 
-## Algorithm
+## The algorithm, in two passes
 
-The core algorithm is **Alternating Least Squares (ALS) with simplex-projected mixture proportions**.
+**Plain version:** the tool is trying to explain each person's G25 coordinates as a mix of a small number of "ancestral profiles," where the mixing percentages for each person have to be non-negative and add up to 100%. It alternates between two questions — "given everyone's mixing percentages, what do the ancestral profiles look like?" and "given the profiles, what's each person's best mix?" — and keeps refining both until the numbers stop moving.
 
-### Problem formulation
+**Technical version**, for anyone who wants the actual method:
 
-Given an input matrix **X** of dimensions N × D (N samples, D = 25 coordinates), the tool finds:
+It's **Alternating Least Squares (ALS) with simplex-projected mixture proportions**.
 
-- **Q** (N × K): per-sample mixture proportions — each row lies on the probability simplex (all entries ≥ 0, each row sums to 1)
-- **P** (K × D): ancestral component centroids in G25 space (unconstrained, since PCA coordinates can be negative)
+Given an input matrix **X** (N samples × D = 25 coordinates), the tool solves for:
 
-such that **X ≈ Q · P** minimizes the Frobenius reconstruction error.
+- **Q** (N × K) — per-sample mixture proportions, each row constrained to the probability simplex (non-negative, sums to 1)
+- **P** (K × D) — ancestral component centroids in G25 space, left unconstrained since PCA coordinates can be negative
 
-The constraint on Q directly mirrors ADMIXTURE's requirement that ancestry fractions be non-negative and sum to unity. This is what produces genuine soft mixtures rather than the hard 0%/100% assignments that a Gaussian Mixture Model would give in high-dimensional space with few samples.
+such that **X ≈ Q · P**, minimizing Frobenius reconstruction error.
 
-### Optimization
+The simplex constraint on Q is doing the real work here — it's what mirrors ADMIXTURE's requirement that ancestry fractions be non-negative and sum to one, and it's why you get genuine soft mixtures instead of the hard 0%/100% calls a Gaussian Mixture Model would hand you in high-dimensional space with few samples.
 
-The algorithm alternates two steps until convergence:
+**The two update steps:**
 
-1. **Fix Q, solve for P** — With Q held constant, the optimal P is the ordinary least-squares solution: P = (QᵀQ)⁻¹QᵀX. A small ridge term (λ = 10⁻⁷) is added to QᵀQ for numerical stability. The K × K matrix is inverted via Gauss-Jordan elimination (tractable since K is small, typically 2–20).
+1. **Fix Q, solve for P.** With Q held constant, this is ordinary least squares: P = (QᵀQ)⁻¹QᵀX, with a small ridge term (λ = 10⁻⁷) added to QᵀQ for stability. The K × K matrix is inverted by Gauss-Jordan elimination, which is fine since K stays small (typically 2–20).
 
-2. **Fix P, solve for Q** — With P held constant, each row of Q is updated independently by minimizing ‖xᵢ − qᵢP‖² subject to qᵢ being on the probability simplex. This is solved via projected gradient descent: compute the gradient (PᵀP · qᵢ − Pᵀxᵢ), take a gradient step, then project back onto the simplex using the algorithm of Duchi et al. (2008). The step size is set adaptively as 0.9 / tr(PᵀP). Each row runs 80 inner projected-gradient iterations.
+2. **Fix P, solve for Q.** Each row of Q updates independently by minimizing ‖xᵢ − qᵢP‖² subject to qᵢ living on the simplex. This runs as projected gradient descent: compute the gradient (PᵀP · qᵢ − Pᵀxᵢ), take a step, then project back onto the simplex using Duchi et al.'s (2008) algorithm. Step size is 0.9 / tr(PᵀP), and each row gets 80 inner iterations.
 
-### Initialization
+**Initialization:** component centroids P start from **K-means++ seeding** — the first centroid picked at random, each next one chosen with probability proportional to its squared distance from the nearest existing centroid. This spreads the starting points out and makes the result far less sensitive to which random seed you happened to get, compared to plain random initialization. Q starts uniform (1/K per component) plus a little noise, then gets projected onto the simplex.
 
-Component centroids P are initialized using **K-means++ seeding**: the first centroid is chosen uniformly at random from the data, and each subsequent centroid is chosen with probability proportional to the squared distance to its nearest existing centroid. This spreads initial centroids across the data and substantially reduces sensitivity to random initialization compared to uniform random starts.
+**Multiple restarts:** the objective isn't convex, so it can get stuck in local minima. The tool runs several independent restarts with different seeds and keeps whichever one reconstructs the data best.
 
-Q is initialized as uniform (1/K per component) plus small random noise, then projected onto the simplex.
-
-### Multiple restarts
-
-Because the objective is non-convex and can have local minima, the tool runs multiple independent restarts with different random seeds and keeps the result with the lowest reconstruction error.
-
-### Convergence
-
-The algorithm terminates when the change in mean squared reconstruction error between consecutive iterations falls below 10⁻¹², or when the maximum iteration count is reached.
+**Convergence:** the algorithm stops once the change in mean squared reconstruction error between iterations drops below 10⁻¹², or when it hits the iteration cap, whichever comes first.
 
 ---
 
@@ -70,29 +62,29 @@ The algorithm terminates when the change in mean squared reconstruction error be
 
 | Parameter | Default | Range | Effect |
 |-----------|---------|-------|--------|
-| **Mode** | Single K | Single K / Sweep K range | Whether to run a single K value or test a range and compare |
-| **K** | 4 | 2–20 | Number of ancestral components to discover. Higher K resolves finer structure but risks overfitting. At K=2 you typically see a broad continental split; at K=4–6, sub-continental structure emerges |
-| **K max** | 10 | 3–20 | Upper bound of the K range when using sweep mode (lower bound is always 2) |
-| **Iterations** | 500 | 50–5000 | Maximum ALS iterations per run. 500 is usually sufficient for convergence with the default data. Increase for very large or complex datasets |
-| **Restarts** | 10 | 1–30 | Number of independent random restarts per K. More restarts reduce the chance of getting stuck in a poor local minimum but increase runtime linearly. 10 is a good balance; for publication-quality results, consider 20–30 |
-| **Palette** | Classic | Classic / Earth Tones / Vibrant | Color scheme for the stacked bar chart and table. Purely aesthetic; does not affect the analysis |
+| **Mode** | Single K | Single K / Sweep K range | Run one K value, or test a range and compare them |
+| **K** | 4 | 2–20 | Number of components to discover. Low K gives you a broad split; high K resolves finer structure but starts overfitting past a point. K=2 usually shows a continental-scale split; K=4–6 starts revealing sub-continental structure |
+| **K max** | 10 | 3–20 | Upper end of the K range in sweep mode (the lower end is fixed at 2) |
+| **Iterations** | 500 | 50–5000 | Max ALS iterations per run. 500 is normally enough to converge; bump it up for large or messy datasets |
+| **Restarts** | 10 | 1–30 | Independent random restarts per K. More restarts lower the odds of landing in a bad local minimum, at the cost of runtime scaling linearly. 10 is a reasonable default; go to 20–30 if you want publication-quality stability |
+| **Palette** | Classic | Classic / Earth Tones / Vibrant | Just the colors. No effect on the analysis |
 
-### Choosing K
+### Picking a K
 
-There is no single correct K — different values reveal different levels of population structure, just like in ADMIXTURE. Some guidelines:
+There's no "correct" K, same as with ADMIXTURE — different values just show you different levels of structure:
 
-- **K=2**: Coarsest split (e.g., West Eurasian vs. non-West Eurasian with the sample data)
-- **K=3–4**: Major continental groupings emerge
-- **K=5–8**: Sub-continental structure (e.g., Northern vs. Southern European, Near Eastern vs. South Asian)
-- **K>10**: Increasingly fine-grained; risk of overfitting with small sample sizes
+- **K=2:** the coarsest split (e.g., West Eurasian vs. everything else, in the sample data)
+- **K=3–4:** major continental groupings show up
+- **K=5–8:** sub-continental patterns emerge — Northern vs. Southern European, Near Eastern vs. South Asian, that sort of thing
+- **K>10:** increasingly fine-grained, and increasingly likely to be fitting noise if your sample size is small
 
-In **sweep mode**, the tool displays a reconstruction error chart. Look for the "elbow" — the K value beyond which adding more components yields diminishing reductions in error. This is analogous to ADMIXTURE's cross-validation error plot.
+In sweep mode, the tool plots reconstruction error against K. Look for the elbow — the point where adding more components stops buying you much. It's the same idea as ADMIXTURE's cross-validation error plot.
 
 ---
 
-## Input Format
+## Input format
 
-Standard G25/Vahaduo scaled coordinate format — one sample per line, comma-separated:
+Standard G25/Vahaduo format — one sample per line, comma-separated:
 
 ```
 Population_Label,coord1,coord2,coord3,...,coord25
@@ -106,11 +98,11 @@ Greek_Crete,0.0609,0.0845,0.0285,-0.0065,-0.0135,0.003,-0.0095,...
 Yoruba,0.082,-0.012,-0.068,-0.059,0.01,-0.018,0.035,0.025,...
 ```
 
-- Labels can contain letters, numbers, underscores, and hyphens
-- Coordinates can be positive or negative (G25 PCA space is centered)
-- Lines starting with `#` are treated as comments and ignored
-- The tool auto-detects the number of dimensions (need not be exactly 25)
-- A built-in sample dataset of 32 world populations is available via the **Load Sample Data** button
+- Labels can use letters, numbers, underscores, and hyphens
+- Coordinates can be positive or negative — G25 space is centered
+- Lines starting with `#` are comments and get skipped
+- The tool figures out the number of dimensions on its own (doesn't have to be exactly 25)
+- A sample dataset of 32 world populations is built in — hit **Load Sample Data**
 
 ---
 
@@ -118,40 +110,41 @@ Yoruba,0.082,-0.012,-0.068,-0.059,0.01,-0.018,0.035,0.025,...
 
 ### Stacked bar chart
 
-The primary visualization is a classic ADMIXTURE-style stacked bar plot. Each vertical bar represents one sample, and the colored segments show the proportion attributed to each discovered component. Bars can be sorted three ways:
+The classic ADMIXTURE-style plot: one bar per sample, colored segments showing each component's proportion. Three sort options:
 
 - **Input** — original order from the pasted data
-- **Cluster** — grouped by dominant component, then sorted by proportion within each group (most useful for visual clarity)
-- **Name** — alphabetical by sample label
+- **Cluster** — grouped by dominant component, then sorted by proportion within each group (usually the clearest view)
+- **Name** — alphabetical
 
 ### Component proportions table
 
-A scrollable table listing every sample with its exact percentage for each component, plus the primary (largest) component assignment. The table respects the current sort order.
+Every sample, its exact percentage on each component, and which component is dominant. Follows whatever sort order the chart is using.
 
 ### CSV export
 
-Click **Export CSV** to download the full proportions matrix as a comma-separated file suitable for further analysis in R, Python, Excel, or any other tool. The exported file contains one row per sample with percentage values (0–100) for each component.
+**Export CSV** downloads the full proportions matrix, one row per sample, percentages from 0–100 for each component — ready to drop into R, Python, Excel, or wherever else you need it.
 
 ### Reconstruction error chart (sweep mode)
 
-When running a K sweep, the tool displays a bar chart of mean squared reconstruction error for each K value. Click any bar to view the decomposition at that K. Lower error indicates better fit; the highlighted bar marks the K with the lowest error.
+A bar chart of mean squared error per K, with the best-fitting K highlighted. Click any bar to jump to that decomposition. Lower is better.
 
 ---
 
-## Interpreting Results with AI
-![Interpret K=10 components to understand which populations might represent the clusters.  Creates a LLM prompt.](decomposition_interpret_with_ai.jpg)
+## Interpreting results with AI
 
-The decomposition discovers latent components, but doesn't tell you *what* they represent. A component that peaks at 45% in Yoruba and Dinka samples is clearly capturing Sub-Saharan African ancestry — but recognizing that requires knowledge of population genetics that the algorithm doesn't have.
+![Interpret K=10 components to understand which populations might represent the clusters. Creates a LLM prompt.](decomposition_interpret_with_ai.jpg)
 
-An LLM (large language model) like [Claude](https://claude.ai), [ChatGPT](https://chat.openai.com), or [Gemini](https://gemini.google.com) can interpret the components by recognizing which populations load highest on each one and mapping those patterns to known ancestral structure from the ancient DNA literature.
+The decomposition tells you the components exist. It doesn't tell you what they mean. If a component peaks at 45% in Yoruba and Dinka samples, that's obviously capturing Sub-Saharan African ancestry — but "obviously" only holds if you already know something about population genetics. The algorithm doesn't.
+
+This is where an LLM — [Claude](https://claude.ai), [ChatGPT](https://chat.openai.com), [Gemini](https://gemini.google.com), whichever you have handy — earns its keep. It can look at which populations load highest on each component and match that pattern against what's known from the ancient DNA literature.
 
 ### Built-in prompt generator
 
-After running a decomposition, an **Interpret with AI** panel appears below the results. Click **Generate Prompt** and the tool will automatically build a structured prompt that summarizes your decomposition — population-level averages and top-scoring samples for each component — formatted for any LLM to interpret. Copy the prompt, paste it into your preferred LLM, and it will identify what each component likely represents.
+Once you've run a decomposition, an **Interpret with AI** panel shows up below the results. Click **Generate Prompt** and it builds a structured summary — population averages and top-scoring samples per component — formatted for any LLM to read. Copy it, paste it into your model of choice, done.
 
-### Doing it manually
+### Doing it by hand
 
-If you prefer, you can export the CSV and write your own prompt. Here is an example you can adapt:
+If you'd rather write your own, export the CSV and adapt something like this:
 
 ```
 I ran an unsupervised ancestry decomposition on G25 scaled PCA coordinates
@@ -170,38 +163,38 @@ Farmer," "East Asian," etc.) based on which samples load highest on each
 component.
 ```
 
-### Tips for better interpretations
+### Getting better interpretations
 
-- **Include population labels that are informative.** "Yoruba" and "Han_Chinese" give the LLM far more to work with than "Sample_001" and "Sample_002." If your samples are labeled with population names, the interpretation will be much richer.
-- **Mention the K value and any context about your dataset.** If your samples are all European, say so — the LLM can calibrate its interpretation accordingly.
-- **Ask follow-up questions.** Once the LLM has identified the components, you can ask things like "Which of my samples show the most Near Eastern Farmer ancestry?" or "What does the split between Component 3 and Component 5 correspond to historically?"
-- **Any capable LLM will work.** The free tiers of Claude, ChatGPT, and Gemini all have sufficient knowledge of population genetics, ancient DNA, and the G25 coordinate system to produce useful interpretations.
-
----
-
-## Technical Notes
-
-- **Why not GMM?** A Gaussian Mixture Model in 25 dimensions with a small number of samples will place a Gaussian component directly on top of each cluster and drive posterior responsibilities to 100%/0%, producing hard assignments rather than soft mixtures. The simplex-constrained matrix factorization used here avoids this by construction.
-
-- **Negative coordinates.** G25 PCA coordinates can be negative, which rules out standard Non-negative Matrix Factorization (NMF). In this algorithm, only Q (the mixture proportions) is constrained to be non-negative; P (the component centroids) is unconstrained and can take any values in the coordinate space.
-
-- **Simplex projection.** The projection of an arbitrary vector onto the probability simplex uses the O(n log n) algorithm of Duchi, Shalev-Shwartz, Singer, and Chandra (2008), "Efficient Projections onto the ℓ₁-Ball for Learning in High Dimensions."
-
-- **Computational cost.** Runtime scales as O(restarts × iterations × N × K × D) for the Q-update step. With the defaults (10 restarts, 500 iterations, D=25), runs complete in under a second for datasets up to several hundred samples. Datasets with thousands of samples may take several seconds.
-
-- **Determinism.** Results are deterministic for a given set of parameters — the tool uses a seeded linear congruential generator (LCG) for reproducibility. Different K values or restart counts will yield different seeds and potentially different results.
+- **Use informative population labels.** "Yoruba" and "Han_Chinese" give the model something to work with. "Sample_001" doesn't.
+- **Say what K you used and give context on your dataset.** If everything's European, mention that — it changes how the model should read the components.
+- **Follow up.** Once the components are labeled, you can ask things like "which of my samples show the most Near Eastern Farmer ancestry?" or "what's the historical story behind the split between Component 3 and Component 5?"
+- **Any capable model works.** Free tiers of Claude, ChatGPT, and Gemini all know enough population genetics and ancient DNA to be useful here.
 
 ---
 
-## Running
+## Technical notes
 
-Open `g25-admixture-tool.html` in any modern browser (Chrome, Firefox, Safari, Edge). Everything runs client-side in JavaScript — no data leaves your machine.
+- **Why not a Gaussian Mixture Model?** In 25 dimensions with relatively few samples, a GMM will plant a Gaussian right on top of each cluster and drive posterior responsibilities to 100%/0% — hard assignments, not the soft mixtures you actually want. The simplex-constrained factorization avoids this by construction, not by tuning.
+
+- **Negative coordinates.** G25 coordinates can go negative, which rules out standard NMF. Here, only Q is forced non-negative; P stays unconstrained and can sit anywhere in coordinate space.
+
+- **Simplex projection.** Projecting an arbitrary vector onto the probability simplex uses the O(n log n) method from Duchi, Shalev-Shwartz, Singer, and Chandra (2008).
+
+- **Cost.** Runtime scales as O(restarts × iterations × N × K × D) for the Q-update. With defaults (10 restarts, 500 iterations, D=25), expect well under a second for datasets up to a few hundred samples, and a few seconds for datasets in the thousands.
+
+- **Determinism.** Same parameters, same result, every time — the tool uses a seeded LCG rather than the browser's built-in randomness. Change K or the restart count and you get a different seed, so results shift accordingly.
+
+---
+
+## Running it
+
+Open `g25-admixture-tool.html` in Chrome, Firefox, Safari, or Edge. It's all client-side JavaScript — nothing you paste in ever leaves your machine.
 
 ---
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
+GNU General Public License v3.0 — see [LICENSE](LICENSE) for the full text.
 
 ---
 
