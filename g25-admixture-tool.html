@@ -127,6 +127,33 @@
   }
   .control-group select:focus, .control-group input:focus { border-color: var(--accent); }
 
+  .label-row { display: flex; align-items: center; gap: 5px; }
+  .info-tip { position: relative; display: inline-flex; }
+  .info-tip .info-icon {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text-dim); font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px; line-height: 12px; text-align: center;
+    cursor: help; user-select: none;
+  }
+  .info-tip:hover .info-icon { border-color: var(--accent); color: var(--accent); }
+  .info-tip .tip-bubble {
+    position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+    width: 240px; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 12px; font-size: 11px; font-weight: 400;
+    text-transform: none; letter-spacing: normal; color: var(--text);
+    line-height: 1.5; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    opacity: 0; visibility: hidden; transition: opacity 0.15s ease;
+    z-index: 20; pointer-events: none;
+  }
+  .info-tip .tip-bubble::after {
+    content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+    border: 6px solid transparent; border-top-color: var(--border);
+  }
+  .info-tip:hover .tip-bubble { opacity: 1; visibility: visible; }
+  .tip-bubble b { color: #fff; }
+  .tip-bubble i { color: var(--text-dim); font-style: normal; display: block; margin-top: 6px; }
+
   .btn {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 12px;
@@ -156,7 +183,15 @@
   .status-bar .err { color: var(--danger); }
 
   .bic-chart { display: flex; align-items: flex-end; gap: 6px; height: 120px; padding: 10px 0; }
+  #bic-panel.stale { opacity: 0.4; filter: grayscale(0.6); position: relative; }
+  #bic-panel.stale::after {
+    content: 'Recalculating with new settings…'; position: absolute; top: 10px; right: 20px;
+    font-size: 11px; font-family: 'IBM Plex Mono', monospace; color: var(--accent);
+    letter-spacing: 0.05em; text-transform: uppercase;
+  }
   .bic-bar-wrap { display: flex; flex-direction: column; align-items: center; flex: 1; max-width: 60px; height: 100%; justify-content: flex-end; cursor: pointer; }
+  .bic-bar-wrap.viewing .bic-bar { box-shadow: 0 0 0 2px #fff; }
+  .bic-bar-wrap.viewing .bic-label { text-decoration: underline; text-underline-offset: 3px; }
   .bic-bar { width: 100%; border-radius: 3px 3px 0 0; transition: height 0.4s ease; min-height: 4px; }
   .bic-label { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--text-dim); margin-top: 6px; }
   .bic-val { font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: var(--text-dim); margin-bottom: 4px; white-space: nowrap; }
@@ -187,7 +222,7 @@
 
 <div class="app-header">
   <h1>G25 → Unsupervised Ancestry Decomposition</h1>
-  <p>Paste G25 scaled coordinates below. The tool factorizes the coordinate matrix X ≈ Q·P where Q holds simplex-constrained mixture proportions and P holds ancestral centroids — producing genuine soft ancestry fractions analogous to ADMIXTURE.</p>
+  <p>Paste your G25 scaled coordinates below. The tool automatically finds a set of underlying ancestral components and works out what percentage of each one shows up in every sample — similar in spirit to ADMIXTURE, running right here in your browser. (For the curious: it factorizes the coordinate matrix as X ≈ Q·P, where Q holds each sample's mixture percentages and P holds the ancestral component profiles.)</p>
 </div>
 
 <div class="container">
@@ -216,12 +251,59 @@
           <input type="number" id="k-max" value="10" min="3" max="20" style="width:65px;">
         </div>
         <div class="control-group">
-          <label>Iterations</label>
+          <div class="label-row">
+            <label>Iterations</label>
+            <span class="info-tip">
+              <span class="info-icon">i</span>
+              <span class="tip-bubble"><b>How many times the tool refines its answer before stopping.</b> It checks its own progress every round and stops automatically once things stop improving, so this number is mainly a safety cap, not a target it always hits. Set it too low (under 100) and it can get cut off before it's found a good answer, especially when you're using more components. Setting it far above 1000 rarely changes the outcome, it just takes longer to run. <i>(For the technically inclined: each round re-solves the ancestral profiles, then re-solves each sample's percentages, and stops when the reconstruction error stops improving.)</i></span>
+            </span>
+          </div>
           <input type="number" id="em-iter" value="500" min="50" max="5000" style="width:80px;">
         </div>
         <div class="control-group">
-          <label>Restarts</label>
+          <div class="label-row">
+            <label>Restarts</label>
+            <span class="info-tip">
+              <span class="info-icon">i</span>
+              <span class="tip-bubble"><b>How many times the tool tries the calculation from a different random starting point.</b> Depending on where it starts, the math can settle on a so-so answer instead of the best one — so the tool tries several starting points and keeps whichever result fits best. That protects you from odd results, like one real component getting split into two, or two real ones getting merged into one. 5-10 restarts is plenty most of the time. If your populations are very closely related, try 15-30 instead. <i>(Technically: each restart uses a different k-means++ seed, since this optimization only guarantees a local optimum, not a global one.)</i></span>
+            </span>
+          </div>
           <input type="number" id="n-runs" value="10" min="1" max="30" style="width:65px;">
+        </div>
+        <div class="control-group hidden" id="criterion-group">
+          <div class="label-row">
+            <label>Selection Criterion</label>
+            <span class="info-tip">
+              <span class="info-icon">i</span>
+              <span class="tip-bubble"><b>How the tool picks the "best" K when you run a sweep.</b> Just looking at raw error is misleading — error almost always keeps shrinking as you add more components, so a plain lowest-score pick would always point you to the biggest K in your range, whether or not that many actually makes sense. BIC/AIC/Raw MSE all work by looking for an <b>elbow</b> in a training-error-based curve: the last K where adding one more component still helped by a meaningful amount, and after which the curve stays calm for the rest of the range — a single small step surrounded by big ones doesn't count, since real curves from this tool are often noisy enough to dip briefly without having actually settled. BIC and AIC additionally penalize model complexity; BIC penalizes harder than AIC. All three can still be fooled once K gets large enough that the model starts fitting individual samples or noise instead of real structure, since they only ever look at how well the model fits the data it was trained on. <b>Cross-Validation</b> avoids that: it fits each K on most of your samples, then tests how well those components explain samples it never saw during fitting. A K that only looks good because it memorized quirks of the training samples won't transfer, so held-out error stops improving (or gets worse) right around where real structure runs out — a more trustworthy signal, at the cost of being much slower to compute, and one that in practice tends to settle down and actually stay settled, unlike the noisier training-based curves. <i>(Technically: BIC/AIC parameters are counted as K·D, where D is the number of coordinate dimensions — only the component profiles (P), not each sample's mixture percentages (Q), the same convention used for factor scores in classical factor analysis. The elbow is found by locating the LAST step whose size is still at least 15% of the first, largest step — the elbow K is the one that step landed on, and it only counts if no later step is big again. If the curve is still jumping around, or still improving, all the way to your K max, there's no elbow to report.)</i></span>
+            </span>
+          </div>
+          <select id="criterion-select">
+            <option value="bic" selected>BIC</option>
+            <option value="aic">AIC</option>
+            <option value="mse">Raw MSE</option>
+            <option value="cv">Cross-Validation</option>
+          </select>
+        </div>
+        <div class="control-group hidden" id="cv-params-group">
+          <div class="label-row">
+            <label>CV Folds</label>
+            <span class="info-tip">
+              <span class="info-icon">i</span>
+              <span class="tip-bubble"><b>How many independent train/test splits to average per K.</b> Each fold randomly holds out a slice of your samples, fits on the rest, and measures error on the held-out slice — more folds means a steadier, less noisy estimate, at the cost of runtime scaling linearly. 5 is a reasonable default; drop to 3 if you're just exploring, or raise to 8-10 for a final, publication-quality run.</span>
+            </span>
+          </div>
+          <input type="number" id="cv-folds" value="5" min="2" max="10" style="width:60px;">
+        </div>
+        <div class="control-group hidden" id="cv-holdout-group">
+          <div class="label-row">
+            <label>Holdout %</label>
+            <span class="info-tip">
+              <span class="info-icon">i</span>
+              <span class="tip-bubble"><b>What fraction of samples get set aside as the test set in each fold.</b> Held-out samples aren't used to fit that fold's components at all — they're only used afterward, to check how well those components explain data they've never seen. 20% is a reasonable default. With a small dataset, a low holdout percentage can leave very few test samples per fold, making the held-out error noisy; the tool will flag it if that looks like it's happening.</span>
+            </span>
+          </div>
+          <input type="number" id="cv-holdout" value="20" min="10" max="40" style="width:60px;">
         </div>
         <div class="control-group">
           <label>Palette</label>
@@ -232,15 +314,16 @@
           </select>
         </div>
         <button class="btn btn-primary" id="run-btn" onclick="runAnalysis()">Run Analysis</button>
+        <button class="btn btn-secondary hidden" id="cancel-btn" onclick="cancelSweep()">Cancel</button>
       </div>
       <div class="status-bar" id="status"></div>
     </div>
   </div>
 
   <div class="panel hidden" id="bic-panel">
-    <div class="panel-head"><h2>Model Selection — Reconstruction Error by K</h2></div>
+    <div class="panel-head"><h2 id="bic-panel-title">Best Number of Components (K) — Scored by BIC</h2></div>
     <div class="panel-body">
-      <p style="font-size:12px; color:var(--text-dim); margin-bottom:10px;">Lower = better fit. Look for the "elbow" where adding more components yields diminishing returns. Click any bar to view that K.</p>
+      <p style="font-size:12px; color:var(--text-dim); margin-bottom:10px;" id="bic-panel-desc">Lower bars are better. Look for the natural "elbow" where adding more components stops making much difference. Click any bar to see that K's results.</p>
       <div class="bic-chart" id="bic-chart"></div>
     </div>
   </div>
@@ -387,9 +470,20 @@ let chartOrientation = 'vertical';
 
 const modeSelect = document.getElementById('mode-select');
 const kMaxGroup = document.getElementById('k-max-group');
-modeSelect.addEventListener('change', () => {
-  kMaxGroup.classList.toggle('hidden', modeSelect.value !== 'sweep');
-});
+const criterionGroup = document.getElementById('criterion-group');
+const criterionSelect = document.getElementById('criterion-select');
+const cvFoldsGroup = document.getElementById('cv-params-group');
+const cvHoldoutGroup = document.getElementById('cv-holdout-group');
+function updateCriterionVisibility() {
+  const isSweep = modeSelect.value === 'sweep';
+  const isCV = criterionSelect.value === 'cv';
+  kMaxGroup.classList.toggle('hidden', !isSweep);
+  criterionGroup.classList.toggle('hidden', !isSweep);
+  cvFoldsGroup.classList.toggle('hidden', !(isSweep && isCV));
+  cvHoldoutGroup.classList.toggle('hidden', !(isSweep && isCV));
+}
+modeSelect.addEventListener('change', updateCriterionVisibility);
+criterionSelect.addEventListener('change', updateCriterionVisibility);
 
 // Update input title with sample count
 const inputTextarea = document.getElementById('input-data');
@@ -591,6 +685,32 @@ function runALS(data, K, maxIter, seed) {
   return { Q, P, error: prevErr };
 }
 
+// ═══ Model selection: BIC/AIC for the Q·P factorization ═══
+// Treats the reconstruction as least-squares under a Gaussian error model.
+// Free parameters counted here: only P's K*D component-profile values.
+// Q's per-sample mixture proportions are NOT counted, even though there are
+// N*(K-1) of them — they're treated as latent per-sample estimates (like
+// factor scores in classical factor analysis), not fixed model parameters.
+// This matters: if Q's proportions were counted, the parameter total would
+// scale with N, and for any dataset beyond a couple hundred samples the
+// penalty added per extra K becomes a near-constant ~(D+N)*log(n), which
+// swamps the (shrinking, sublinear) fit improvement from a real extra
+// component almost immediately — pushing the "best" K to the bottom of the
+// range regardless of the data. That's the classic incidental-parameters
+// problem, and it's the reason ADMIXTURE itself uses cross-validation error
+// rather than AIC/BIC for choosing K. Counting only P avoids it.
+// n = total number of scalar observations (N*D). RSS is recovered from the
+// mean squared error already tracked by runALS (err = RSS / n).
+function computeCriteria(mse, N, D, K) {
+  const n = N * D;
+  const rss = mse * n;
+  const numParams = K * D;
+  const logTerm = n * Math.log(Math.max(rss / n, 1e-300));
+  const bic = logTerm + numParams * Math.log(n);
+  const aic = logTerm + 2 * numParams;
+  return { bic, aic, numParams };
+}
+
 function bestOfRuns(data, K, maxIter, nRuns) {
   let best = null;
   for (let r = 0; r < nRuns; r++) {
@@ -599,17 +719,447 @@ function bestOfRuns(data, K, maxIter, nRuns) {
     if (!best || res.error < best.error) best = res;
   }
   // Sort components by total weight
-  const N = data.length;
+  const N = data.length, D = data[0].length;
   const totals = new Float64Array(K);
   for (let i = 0; i < N; i++) for (let k = 0; k < K; k++) totals[k] += best.Q[i][k];
   const order = Array.from({ length: K }, (_, i) => i).sort((a, b) => totals[b] - totals[a]);
   const sQ = best.Q.map(row => { const nr = new Float64Array(K); for (let k = 0; k < K; k++) nr[k] = row[order[k]]; return nr; });
   const sP = order.map(k => best.P[k]);
-  return { Q: sQ, P: sP, error: best.error };
+  const { bic, aic, numParams } = computeCriteria(best.error, N, D, K);
+  return { Q: sQ, P: sP, error: best.error, bic, aic, numParams };
+}
+
+// ═══ Elbow detection for K selection ═══
+// Picking the single lowest score in the whole sweep (a plain global
+// minimum) isn't the same thing as finding an elbow — a criterion that
+// keeps improving all the way to the top of the range will always have its
+// global minimum at the last K tested, regardless of where the real
+// diminishing returns kicked in.
+//
+// A naive fix — stop at the FIRST step whose improvement drops below a
+// fraction of the first (largest) step — turns out to be too easily fooled.
+// Real curves from this tool are often noisy: a single small step can show
+// up early by chance, surrounded by otherwise-large steps on both sides,
+// and a first-crossing rule latches onto that blip and stops looking,
+// even though substantial real improvement was still ahead.
+//
+// This instead walks the WHOLE curve and finds the LAST step that still
+// counts as "big" (>= thresholdFrac of the first step). The elbow, if any,
+// is the K that big step landed on — and it only counts if every step after
+// it stays small the rest of the way to K max. That's a materially
+// stronger claim than "this one step happened to be small": it means the
+// curve actually settled down and stayed settled, not just dipped once.
+// If the curve never settles for good within the tested range (including
+// if it's still jumping around, or improving, right up to K max), there is
+// no elbow to report, and the tool says so rather than guessing.
+function findElbow(results, criterion, thresholdFrac = 0.15) {
+  const vals = results.map(r => r[criterion]);
+  const globalMinIdx = vals.reduce((best, v, i) => (v < vals[best] ? i : best), 0);
+  if (vals.length < 3) return { idx: globalMinIdx, elbowFound: false };
+  const firstStep = Math.abs(vals[1] - vals[0]);
+  if (firstStep < 1e-12) return { idx: globalMinIdx, elbowFound: false };
+  const threshold = thresholdFrac * firstStep;
+  let lastBigStepIdx = -1;
+  for (let i = 1; i < vals.length; i++) {
+    const step = Math.abs(vals[i] - vals[i - 1]);
+    if (step >= threshold) lastBigStepIdx = i;
+  }
+  // No big step found at all, or the last big step was the final one tested
+  // (curve hadn't settled by the end of the range) — no elbow either way.
+  if (lastBigStepIdx === -1 || lastBigStepIdx === vals.length - 1) {
+    return { idx: globalMinIdx, elbowFound: false };
+  }
+  return { idx: lastBigStepIdx, elbowFound: true };
 }
 
 function setStatus(msg, type) {
   document.getElementById('status').innerHTML = type ? `<span class="${type}">${msg}</span>` : msg;
+}
+
+
+
+// ═══ Web Worker for sweep mode ═══
+// Sweep mode runs ALS for every K in a range, each with several restarts —
+// this can take seconds to minutes and previously blocked the main thread,
+// freezing the page. This runs it off-thread via a Blob-based worker (no
+// separate .js file needed) and streams progress back per restart.
+// The worker is a self-contained copy of the core ALS math: workers don't
+// share scope with the page, so projectSimplex/kmeansppInit/invertMatrix/
+// runALS/computeCriteria are duplicated here rather than imported.
+const SWEEP_WORKER_SRC = [
+  'function projectSimplex(v) {',
+  '  const n = v.length;',
+  '  const u = [...v].sort((a, b) => b - a);',
+  '  let cumSum = 0, rho = 0;',
+  '  for (let j = 0; j < n; j++) {',
+  '    cumSum += u[j];',
+  '    if (u[j] + (1 - cumSum) / (j + 1) > 0) rho = j + 1;',
+  '  }',
+  '  let s = 0;',
+  '  for (let j = 0; j < rho; j++) s += u[j];',
+  '  const theta = (s - 1) / rho;',
+  '  const w = new Float64Array(n);',
+  '  for (let i = 0; i < n; i++) w[i] = Math.max(v[i] - theta, 0);',
+  '  return w;',
+  '}',
+  'function makeRng(seed) {',
+  '  let s = seed | 0;',
+  '  return () => { s = (s * 1664525 + 1013904223) & 0x7fffffff; return s / 0x7fffffff; };',
+  '}',
+  'function kmeansppInit(data, K, rand) {',
+  '  const N = data.length, D = data[0].length;',
+  '  const idxs = [];',
+  '  const used = new Set();',
+  '  let c = Math.floor(rand() * N);',
+  '  idxs.push(c); used.add(c);',
+  '  for (let k = 1; k < K; k++) {',
+  '    const dists = new Float64Array(N);',
+  '    for (let i = 0; i < N; i++) {',
+  '      if (used.has(i)) continue;',
+  '      let minD = Infinity;',
+  '      for (const ci of idxs) {',
+  '        let d = 0;',
+  '        for (let j = 0; j < D; j++) d += (data[i][j] - data[ci][j]) ** 2;',
+  '        if (d < minD) minD = d;',
+  '      }',
+  '      dists[i] = minD;',
+  '    }',
+  '    const total = dists.reduce((a, b) => a + b, 0);',
+  '    let r = rand() * total, chosen = 0;',
+  '    for (let i = 0; i < N; i++) { r -= dists[i]; if (r <= 0) { chosen = i; break; } }',
+  '    idxs.push(chosen); used.add(chosen);',
+  '  }',
+  '  return idxs;',
+  '}',
+  'function invertMatrix(M, n) {',
+  '  const aug = Array.from({ length: n }, (_, i) => {',
+  '    const row = new Float64Array(2 * n);',
+  '    for (let j = 0; j < n; j++) row[j] = M[i][j];',
+  '    row[n + i] = 1;',
+  '    return row;',
+  '  });',
+  '  for (let col = 0; col < n; col++) {',
+  '    let maxVal = Math.abs(aug[col][col]), maxRow = col;',
+  '    for (let row = col + 1; row < n; row++) {',
+  '      if (Math.abs(aug[row][col]) > maxVal) { maxVal = Math.abs(aug[row][col]); maxRow = row; }',
+  '    }',
+  '    [aug[col], aug[maxRow]] = [aug[maxRow], aug[col]];',
+  '    const pivot = aug[col][col];',
+  '    if (Math.abs(pivot) < 1e-15) continue;',
+  '    for (let j = 0; j < 2 * n; j++) aug[col][j] /= pivot;',
+  '    for (let row = 0; row < n; row++) {',
+  '      if (row === col) continue;',
+  '      const f = aug[row][col];',
+  '      for (let j = 0; j < 2 * n; j++) aug[row][j] -= f * aug[col][j];',
+  '    }',
+  '  }',
+  '  return aug.map(row => Float64Array.from(row.slice(n)));',
+  '}',
+  'function runALS(data, K, maxIter, seed) {',
+  '  const N = data.length, D = data[0].length;',
+  '  const rand = makeRng(seed);',
+  '  const initIdx = kmeansppInit(data, K, rand);',
+  '  const P = initIdx.map(i => Float64Array.from(data[i]));',
+  '  const Q = Array.from({ length: N }, () => {',
+  '    const row = new Float64Array(K);',
+  '    for (let k = 0; k < K; k++) row[k] = 1 / K + (rand() - 0.5) * 0.2;',
+  '    return projectSimplex(row);',
+  '  });',
+  '  let prevErr = Infinity;',
+  '  for (let iter = 0; iter < maxIter; iter++) {',
+  '    const QtQ = Array.from({ length: K }, () => new Float64Array(K));',
+  '    for (let i = 0; i < N; i++)',
+  '      for (let a = 0; a < K; a++)',
+  '        for (let b = a; b < K; b++)',
+  '          QtQ[a][b] += Q[i][a] * Q[i][b];',
+  '    for (let a = 0; a < K; a++) {',
+  '      for (let b = 0; b < a; b++) QtQ[a][b] = QtQ[b][a];',
+  '      QtQ[a][a] += 1e-7;',
+  '    }',
+  '    const QtX = Array.from({ length: K }, () => new Float64Array(D));',
+  '    for (let i = 0; i < N; i++)',
+  '      for (let k = 0; k < K; k++) {',
+  '        const q = Q[i][k];',
+  '        if (q < 1e-15) continue;',
+  '        for (let d = 0; d < D; d++) QtX[k][d] += q * data[i][d];',
+  '      }',
+  '    const inv = invertMatrix(QtQ, K);',
+  '    for (let k = 0; k < K; k++)',
+  '      for (let d = 0; d < D; d++) {',
+  '        let v = 0;',
+  '        for (let j = 0; j < K; j++) v += inv[k][j] * QtX[j][d];',
+  '        P[k][d] = v;',
+  '      }',
+  '    const PPt = Array.from({ length: K }, () => new Float64Array(K));',
+  '    for (let a = 0; a < K; a++)',
+  '      for (let b = a; b < K; b++) {',
+  '        let dot = 0;',
+  '        for (let d = 0; d < D; d++) dot += P[a][d] * P[b][d];',
+  '        PPt[a][b] = dot; PPt[b][a] = dot;',
+  '      }',
+  '    let trPPt = 0;',
+  '    for (let k = 0; k < K; k++) trPPt += PPt[k][k];',
+  '    const stepSize = 0.9 / (trPPt + 1e-10);',
+  '    for (let i = 0; i < N; i++) {',
+  '      const Px = new Float64Array(K);',
+  '      for (let k = 0; k < K; k++) {',
+  '        let dot = 0;',
+  '        for (let d = 0; d < D; d++) dot += P[k][d] * data[i][d];',
+  '        Px[k] = dot;',
+  '      }',
+  '      let q = Float64Array.from(Q[i]);',
+  '      for (let pgd = 0; pgd < 80; pgd++) {',
+  '        const grad = new Float64Array(K);',
+  '        for (let a = 0; a < K; a++) {',
+  '          let g = -Px[a];',
+  '          for (let b = 0; b < K; b++) g += PPt[a][b] * q[b];',
+  '          grad[a] = g;',
+  '        }',
+  '        const qNew = new Float64Array(K);',
+  '        for (let k = 0; k < K; k++) qNew[k] = q[k] - stepSize * grad[k];',
+  '        q = projectSimplex(qNew);',
+  '      }',
+  '      Q[i] = q;',
+  '    }',
+  '    let err = 0;',
+  '    for (let i = 0; i < N; i++)',
+  '      for (let d = 0; d < D; d++) {',
+  '        let r = 0;',
+  '        for (let k = 0; k < K; k++) r += Q[i][k] * P[k][d];',
+  '        err += (data[i][d] - r) ** 2;',
+  '      }',
+  '    err /= (N * D);',
+  '    if (iter > 5 && Math.abs(prevErr - err) < 1e-12) break;',
+  '    prevErr = err;',
+  '  }',
+  '  return { Q, P, error: prevErr };',
+  '}',
+  'function computeCriteria(mse, N, D, K) {',
+  '  const n = N * D;',
+  '  const rss = mse * n;',
+  '  const numParams = K * D;',
+  '  const logTerm = n * Math.log(Math.max(rss / n, 1e-300));',
+  '  const bic = logTerm + numParams * Math.log(n);',
+  '  const aic = logTerm + 2 * numParams;',
+  '  return { bic: bic, aic: aic, numParams: numParams };',
+  '}',
+  // Cross-validation: fit P on a random training subset of samples, then
+  // freeze it and project each held-out sample onto it (a single Q-update
+  // step, reusing the same projected-gradient math runALS uses internally)
+  // to see how well components fit on some samples explain OTHER samples
+  // they never influenced. Averaged over several random folds per K.
+  'function crossValidateK(data, K, maxIter, foldRestarts, numFolds, holdoutFrac, kSeed, onFold) {',
+  '  const N = data.length, D = data[0].length;',
+  '  const rng = makeRng(kSeed);',
+  '  let totalErr = 0, totalCount = 0, minTestN = Infinity;',
+  '  for (let f = 0; f < numFolds; f++) {',
+  '    const idx = Array.from({ length: N }, (_, i) => i);',
+  '    for (let i = idx.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); const t = idx[i]; idx[i] = idx[j]; idx[j] = t; }',
+  '    const nTest = Math.max(1, Math.round(N * holdoutFrac));',
+  '    minTestN = Math.min(minTestN, nTest);',
+  '    const testIdx = idx.slice(0, nTest);',
+  '    const trainIdx = idx.slice(nTest);',
+  '    const trainData = trainIdx.map(i => data[i]);',
+  '    let best = null;',
+  '    for (let r = 0; r < foldRestarts; r++) {',
+  '      const seed = (kSeed * 100003 + f * 7919 + r * 613 + 42) | 0;',
+  '      const res = runALS(trainData, K, maxIter, seed);',
+  '      if (!best || res.error < best.error) best = res;',
+  '    }',
+  '    const P = best.P;',
+  '    const PPt = Array.from({ length: K }, () => new Float64Array(K));',
+  '    for (let a = 0; a < K; a++) for (let b = a; b < K; b++) { let dot = 0; for (let d = 0; d < D; d++) dot += P[a][d] * P[b][d]; PPt[a][b] = dot; PPt[b][a] = dot; }',
+  '    let trPPt = 0; for (let k = 0; k < K; k++) trPPt += PPt[k][k];',
+  '    const stepSize = 0.9 / (trPPt + 1e-10);',
+  '    for (const ti of testIdx) {',
+  '      const xi = data[ti];',
+  '      const Px = new Float64Array(K);',
+  '      for (let k = 0; k < K; k++) { let dot = 0; for (let d = 0; d < D; d++) dot += P[k][d] * xi[d]; Px[k] = dot; }',
+  '      let q = new Float64Array(K).fill(1 / K);',
+  '      for (let pgd = 0; pgd < 80; pgd++) {',
+  '        const grad = new Float64Array(K);',
+  '        for (let a = 0; a < K; a++) { let g = -Px[a]; for (let b = 0; b < K; b++) g += PPt[a][b] * q[b]; grad[a] = g; }',
+  '        const qNew = new Float64Array(K);',
+  '        for (let k = 0; k < K; k++) qNew[k] = q[k] - stepSize * grad[k];',
+  '        q = projectSimplex(qNew);',
+  '      }',
+  '      let err = 0;',
+  '      for (let d = 0; d < D; d++) { let r = 0; for (let k = 0; k < K; k++) r += q[k] * P[k][d]; err += (xi[d] - r) ** 2; }',
+  '      totalErr += err;',
+  '      totalCount += D;',
+  '    }',
+  '    if (onFold) onFold(f + 1, numFolds);',
+  '  }',
+  '  return { cvError: totalErr / totalCount, minTestN: minTestN };',
+  '}',
+  'self.onmessage = function(e) {',
+  '  const msg = e.data;',
+  '  if (msg.type === "runK") {',
+  '    const K = msg.k, data = msg.data, maxIter = msg.maxIter, nRuns = msg.nRuns;',
+  '    let best = null;',
+  '    for (let r = 0; r < nRuns; r++) {',
+  '      const seed = (K * 100003 + r * 7919 + 42) | 0;',
+  '      const res = runALS(data, K, maxIter, seed);',
+  '      if (!best || res.error < best.error) best = res;',
+  '      self.postMessage({ type: "progress", k: K, restart: r + 1, nRuns: nRuns });',
+  '    }',
+  '    const N = data.length, D = data[0].length;',
+  '    const totals = new Float64Array(K);',
+  '    for (let i = 0; i < N; i++) for (let k = 0; k < K; k++) totals[k] += best.Q[i][k];',
+  '    const order = Array.from({ length: K }, (_, i) => i).sort((a, b) => totals[b] - totals[a]);',
+  '    const sQ = best.Q.map(row => { const nr = new Float64Array(K); for (let k = 0; k < K; k++) nr[k] = row[order[k]]; return nr; });',
+  '    const sP = order.map(k => best.P[k]);',
+  '    const crit = computeCriteria(best.error, N, D, K);',
+  '    self.postMessage({ type: "done", k: K, result: { Q: sQ, P: sP, error: best.error, bic: crit.bic, aic: crit.aic, numParams: crit.numParams } });',
+  '  } else if (msg.type === "runK-CV") {',
+  '    const K = msg.k, data = msg.data, maxIter = msg.maxIter;',
+  '    const { cvError, minTestN } = crossValidateK(data, K, maxIter, msg.foldRestarts, msg.numFolds, msg.holdoutFrac, msg.kSeed, (f, nf) => {',
+  '      self.postMessage({ type: "progress-cv", k: K, fold: f, numFolds: nf });',
+  '    });',
+  '    self.postMessage({ type: "done-cv", k: K, result: { cv: cvError, minTestN: minTestN } });',
+  '  }',
+  '};'
+].join('\n');
+
+let sweepWorkerUrl = null;
+let currentSweepWorker = null;
+let currentSweepCancel = null; // set to a function that rejects the in-flight sweep promise
+
+function getSweepWorkerUrl() {
+  if (!sweepWorkerUrl) {
+    const blob = new Blob([SWEEP_WORKER_SRC], { type: 'application/javascript' });
+    sweepWorkerUrl = URL.createObjectURL(blob);
+  }
+  return sweepWorkerUrl;
+}
+
+function cancelSweep() {
+  if (currentSweepCancel) currentSweepCancel();
+}
+
+// Runs bestOfRuns(data, k, maxIter, nRuns) for every k in [kMin, kMax] on a
+// background worker, resolving with the same shape the old synchronous loop
+// produced ({k, Q, P, error, bic, aic, numParams} per entry).
+function runSweepInWorker(data, kMin, kMax, maxIter, nRuns) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(getSweepWorkerUrl());
+    currentSweepWorker = worker;
+    currentSweepCancel = () => {
+      worker.terminate();
+      currentSweepWorker = null;
+      currentSweepCancel = null;
+      reject(new Error('cancelled'));
+    };
+
+    const results = [];
+    let k = kMin;
+
+    function launchNext() {
+      if (k > kMax) {
+        worker.terminate();
+        currentSweepWorker = null;
+        currentSweepCancel = null;
+        resolve(results);
+        return;
+      }
+      setStatus(`Calculating K=${k} of ${kMax} (0/${nRuns} restarts)...`);
+      worker.postMessage({ type: 'runK', k, data, maxIter, nRuns });
+    }
+
+    worker.onmessage = (e) => {
+      const msg = e.data;
+      if (msg.type === 'progress') {
+        setStatus(`Calculating K=${msg.k} of ${kMax} (${msg.restart}/${msg.nRuns} restarts)...`);
+      } else if (msg.type === 'done') {
+        results.push({ k: msg.k, ...msg.result });
+        k++;
+        launchNext();
+      }
+    };
+    worker.onerror = (err) => {
+      worker.terminate();
+      currentSweepWorker = null;
+      currentSweepCancel = null;
+      reject(err);
+    };
+
+    launchNext();
+  });
+}
+
+// Refits a single K on the full dataset via the same worker used for
+// sweeps, using the existing 'runK' job type. Used when clicking a bar in
+// Cross-Validation mode, since CV's own per-K results never fit the whole
+// dataset — this is the one place that produces the full Q/P to display.
+// Runs off the main thread specifically so clicking a bar doesn't freeze
+// the page while it refits.
+function refitKInWorker(data, k, maxIter, nRuns) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(getSweepWorkerUrl());
+    worker.onmessage = (e) => {
+      const msg = e.data;
+      if (msg.type === 'progress') {
+        setStatus(`Refitting K=${k} on full dataset (${msg.restart}/${msg.nRuns} restarts)...`);
+      } else if (msg.type === 'done') {
+        worker.terminate();
+        resolve({ k, ...msg.result });
+      }
+    };
+    worker.onerror = (err) => { worker.terminate(); reject(err); };
+    worker.postMessage({ type: 'runK', k, data, maxIter, nRuns });
+  });
+}
+
+// Same shape as runSweepInWorker, but each K is scored by held-out
+// cross-validation error instead of a training-only criterion. Results
+// carry {k, cv, minTestN} — minTestN lets the caller warn if a fold's
+// held-out set was small enough that the CV estimate is likely noisy.
+function runSweepCVInWorker(data, kMin, kMax, maxIter, foldRestarts, numFolds, holdoutFrac) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(getSweepWorkerUrl());
+    currentSweepWorker = worker;
+    currentSweepCancel = () => {
+      worker.terminate();
+      currentSweepWorker = null;
+      currentSweepCancel = null;
+      reject(new Error('cancelled'));
+    };
+
+    const results = [];
+    let k = kMin;
+
+    function launchNext() {
+      if (k > kMax) {
+        worker.terminate();
+        currentSweepWorker = null;
+        currentSweepCancel = null;
+        resolve(results);
+        return;
+      }
+      setStatus(`Cross-validating K=${k} of ${kMax} (fold 0/${numFolds})...`);
+      const kSeed = k * 31 + 7;
+      worker.postMessage({ type: 'runK-CV', k, data, maxIter, foldRestarts, numFolds, holdoutFrac, kSeed });
+    }
+
+    worker.onmessage = (e) => {
+      const msg = e.data;
+      if (msg.type === 'progress-cv') {
+        setStatus(`Cross-validating K=${msg.k} of ${kMax} (fold ${msg.fold}/${msg.numFolds})...`);
+      } else if (msg.type === 'done-cv') {
+        results.push({ k: msg.k, cv: msg.result.cv, minTestN: msg.result.minTestN });
+        k++;
+        launchNext();
+      }
+    };
+    worker.onerror = (err) => {
+      worker.terminate();
+      currentSweepWorker = null;
+      currentSweepCancel = null;
+      reject(err);
+    };
+
+    launchNext();
+  });
 }
 
 async function runAnalysis() {
@@ -627,50 +1177,165 @@ async function runAnalysis() {
 
   if (mode === 'sweep') {
     const kMin = 2, kMax = Math.min(parseInt(document.getElementById('k-max').value) || 10, samples.length - 1);
-    const results = [];
-    for (let k = kMin; k <= kMax; k++) {
-      setStatus(`Running K=${k} (${nRuns} restarts)...`);
-      await new Promise(r => setTimeout(r, 10));
-      results.push({ k, ...bestOfRuns(data, k, maxIter, nRuns) });
+    const criterion = document.getElementById('criterion-select').value; // 'bic' | 'aic' | 'mse' | 'cv'
+    document.getElementById('cancel-btn').classList.remove('hidden');
+    if (!document.getElementById('bic-panel').classList.contains('hidden')) {
+      document.getElementById('bic-panel').classList.add('stale');
     }
-    let bestIdx = 0;
-    for (let i = 1; i < results.length; i++) if (results[i].error < results[bestIdx].error) bestIdx = i;
-    showErrorChart(results, bestIdx);
-    currentResult = results[bestIdx];
-    setStatus(`Done. Showing K=${results[bestIdx].k}. Click bars to compare.`, 'ok');
-    showPlot(samples, currentResult); showTable(samples, currentResult); showCentroids(samples, currentResult); showInterpretPanel();
+    try {
+      let results;
+      if (criterion === 'cv') {
+        const numFolds = parseInt(document.getElementById('cv-folds').value) || 5;
+        const holdoutFrac = (parseInt(document.getElementById('cv-holdout').value) || 20) / 100;
+        const foldRestarts = Math.min(nRuns, 5); // bounded independently of Restarts to keep CV runtime sane
+        results = await runSweepCVInWorker(data, kMin, kMax, maxIter, foldRestarts, numFolds, holdoutFrac);
+      } else {
+        results = await runSweepInWorker(data, kMin, kMax, maxIter, nRuns);
+      }
+      const { idx: bestIdx, elbowFound } = findElbow(results, criterion);
+      showErrorChart(results, bestIdx, criterion, elbowFound, nRuns);
+      if (criterion === 'cv') {
+        setStatus(`Sweep done. Refitting K=${results[bestIdx].k} on full dataset...`);
+        currentResult = await refitKInWorker(data, results[bestIdx].k, maxIter, nRuns);
+      } else {
+        currentResult = results[bestIdx];
+      }
+      if (elbowFound) {
+        setStatus(`Done. Showing K=${results[bestIdx].k} — the elbow in ${criterion.toUpperCase()}. Click bars to compare.`, 'ok');
+      } else {
+        setStatus(`Done. No clear elbow in ${criterion.toUpperCase()} across K=${kMin}-${kMax} — showing K=${results[bestIdx].k} (lowest score, likely just the top of your range). Consider widening K max or judging the elbow by eye.`, 'ok');
+      }
+      showPlot(samples, currentResult); showTable(samples, currentResult); showCentroids(samples, currentResult); showInterpretPanel();
+    } catch (err) {
+      const msg = (err && err.message) || String(err);
+      setStatus(msg === 'cancelled' ? 'Sweep cancelled.' : `Sweep failed: ${msg}`, 'err');
+      document.getElementById('bic-panel').classList.remove('stale');
+    } finally {
+      document.getElementById('cancel-btn').classList.add('hidden');
+    }
   } else {
     const K = Math.min(parseInt(document.getElementById('k-val').value) || 4, samples.length - 1);
     setStatus(`Running K=${K} (${nRuns} restarts)...`);
     await new Promise(r => setTimeout(r, 10));
     currentResult = { k: K, ...bestOfRuns(data, K, maxIter, nRuns) };
     document.getElementById('bic-panel').classList.add('hidden');
-    setStatus(`Done. K=${K}, MSE=${currentResult.error.toExponential(3)}`, 'ok');
+    setStatus(`Done. K=${K}, MSE=${currentResult.error.toExponential(3)}, BIC=${currentResult.bic.toFixed(1)}, AIC=${currentResult.aic.toFixed(1)}`, 'ok');
     showPlot(samples, currentResult); showTable(samples, currentResult); showCentroids(samples, currentResult); showInterpretPanel();
   }
   document.getElementById('run-btn').disabled = false;
 }
 
-function showErrorChart(results, bestIdx) {
+const CRITERION_INFO = {
+  bic: { label: 'BIC', title: 'Best Number of Components (K) — Scored by BIC', desc: 'Lower bars are better. BIC rewards a good fit but penalizes using too many components, so it tends to point you toward a simpler, more clear-cut answer. Click any bar to see that K\'s results.' },
+  aic: { label: 'AIC', title: 'Best Number of Components (K) — Scored by AIC', desc: 'Lower bars are better. AIC also rewards a good fit while penalizing extra components, but its penalty is lighter than BIC\'s, so it\'s a bit more willing to suggest a higher K. Click any bar to see that K\'s results.' },
+  mse: { label: 'MSE', title: 'Fit by Number of Components (K) — Raw Error', desc: 'Lower bars mean a mathematically better fit, but this view ignores complexity, so it will almost always keep favoring the highest K in your range rather than the most meaningful one. Click any bar to see that K\'s results.' },
+  cv: { label: 'CV error', title: 'Best Number of Components (K) — Cross-Validated', desc: 'Lower bars are better. Each bar is the average reconstruction error on samples that were held out and never used to fit that K\'s components — so a K that only did well by memorizing training-sample quirks won\'t score well here. This is slower than BIC/AIC/MSE but doesn\'t depend on counting parameters, and stays honest even in the regime where those can be fooled. Click any bar to see that K\'s results (re-fit on your full dataset).' }
+};
+
+function showErrorChart(results, bestIdx, criterion, elbowFound, nRuns) {
+  criterion = criterion || 'bic';
+  const info = CRITERION_INFO[criterion];
+  document.getElementById('bic-panel-title').textContent = info.title;
+  let desc = info.desc;
+  if (elbowFound) {
+    desc += ` The highlighted bar is the elbow — the last K where adding one more component still improved ${info.label} by a meaningful amount, and after which every remaining step in this sweep stayed small. A single small step surrounded by bigger ones wasn't enough to count; this only flags a K once the curve actually settled down and stayed there.`;
+  } else {
+    desc += ` No elbow showed up across this K range — ${info.label} either kept improving substantially all the way to K=${results[results.length - 1].k}, or had a jump back up to a substantial improvement somewhere after an apparent dip, so nothing in this range counts as a settled flattening point. The highlighted bar is just the lowest score, not a real elbow. That usually means either the true elbow is above your K max, or something (outliers, or K approaching the number of coordinate dimensions) is driving error down for reasons other than real ancestry structure. Widen K max, or judge by eye instead.`;
+  }
+  // BIC/AIC assume the parameter count is small relative to the data. Here,
+  // Q contributes N*(K-1) parameters, so the parameter count grows with the
+  // sample size — with few samples relative to K, that assumption breaks
+  // down and the criterion can swing back toward favoring overfit/high K.
+  // Surface this rather than silently picking a misleading "best" K.
+  if (criterion !== 'mse' && criterion !== 'cv' && currentSamples && currentSamples.length) {
+    const N = currentSamples.length, D = currentSamples[0].coords.length;
+    const n = N * D;
+    const bestParams = results[bestIdx].numParams;
+    if (bestParams > 0.5 * n) {
+      desc += ` Heads up: at K=${results[bestIdx].k}, this is asking the model to fit ${bestParams} unknowns from only ${n} data points (${N} samples × ${D} coordinate dimensions). With this few samples for this many components, ${info.label} can lose its ability to catch over-fitting and end up recommending too high a K anyway. Trust your own eye here as much as the chart — look for a natural "elbow" in the bars, and check whether the resulting groupings still make sense biologically.`;
+    }
+  }
+  // CV's own small-sample caveat: a tiny held-out set per fold makes the
+  // averaged error noisy regardless of K, since a handful of samples can
+  // swing the mean substantially.
+  if (criterion === 'cv') {
+    const minTestN = results[bestIdx].minTestN;
+    if (minTestN < 15) {
+      desc += ` Heads up: some folds held out only ${minTestN} sample${minTestN === 1 ? '' : 's'} for testing. With this few held-out samples, CV error can be noisy — consider more folds, a higher holdout %, or more total samples before trusting small differences between bars.`;
+    }
+  }
+  desc += criterion === 'cv'
+    ? ` (Computed with ${nRuns} restart${nRuns === 1 ? '' : 's'} for the final re-fit shown when you click a bar.)`
+    : ` (Computed with ${nRuns} restart${nRuns === 1 ? '' : 's'} per K.)`;
+  document.getElementById('bic-panel-desc').textContent = desc;
   document.getElementById('bic-panel').classList.remove('hidden');
+  document.getElementById('bic-panel').classList.remove('stale');
   const c = document.getElementById('bic-chart');
   c.innerHTML = '';
-  const maxE = Math.max(...results.map(r => r.error));
-  const minE = Math.min(...results.map(r => r.error));
+  const values = results.map(r => r[criterion]);
+  const maxE = Math.max(...values);
+  const minE = Math.min(...values);
   const range = maxE - minE || 1;
+  const allWraps = []; // so clicking one bar can un-mark whichever was "viewing" before
+  function markViewing(idx) {
+    allWraps.forEach((w, wi) => w.classList.toggle('viewing', wi === idx));
+  }
   results.forEach((r, i) => {
+    const v = r[criterion];
     const wrap = document.createElement('div'); wrap.className = 'bic-bar-wrap';
-    const val = document.createElement('div'); val.className = 'bic-val'; val.textContent = r.error.toExponential(2);
+    const val = document.createElement('div'); val.className = 'bic-val';
+    val.textContent = (criterion === 'mse' || criterion === 'cv') ? v.toExponential(2) : v.toFixed(1);
     const bar = document.createElement('div'); bar.className = 'bic-bar';
-    bar.style.height = (15 + 80 * ((r.error - minE) / range)) + '%';
-    bar.style.background = i === bestIdx ? 'var(--accent)' : 'var(--surface2)';
+    bar.style.height = (15 + 80 * ((v - minE) / range)) + '%';
+    const highlightColor = elbowFound ? 'var(--accent)' : '#c9973a';
+    bar.style.background = i === bestIdx ? highlightColor : 'var(--surface2)';
     bar.style.border = i === bestIdx ? 'none' : '1px solid var(--border)';
-    bar.title = `K=${r.k}`;
-    wrap.onclick = () => { currentResult = r; showPlot(currentSamples, r); showTable(currentSamples, r); showCentroids(currentSamples, r); showInterpretPanel(); };
+    bar.title = criterion === 'cv'
+      ? `K=${r.k}${i === bestIdx ? (elbowFound ? ' — elbow' : ' — lowest score, no elbow found') : ''} — held-out CV error=${r.cv.toExponential(2)} (min fold test size ${r.minTestN})`
+      : `K=${r.k}${i === bestIdx ? (elbowFound ? ' — elbow' : ' — lowest score, no elbow found') : ''} — MSE=${r.error.toExponential(2)}, BIC=${r.bic.toFixed(1)}, AIC=${r.aic.toFixed(1)}`;
+    wrap.onclick = async () => {
+      markViewing(i);
+      if (criterion === 'cv') {
+        // CV results don't carry a full Q/P (they were fit on training folds
+        // only) — re-fit this K on the entire dataset before displaying it.
+        // Runs through the worker so the page doesn't freeze while it works.
+        const clickMaxIter = parseInt(document.getElementById('em-iter').value) || 500;
+        const clickNRuns = parseInt(document.getElementById('n-runs').value) || 10;
+        const fullData = currentSamples.map(s => s.coords);
+        document.getElementById('run-btn').disabled = true;
+        setStatus(`Refitting K=${r.k} on full dataset (${clickNRuns} restarts)...`);
+        try {
+          currentResult = await refitKInWorker(fullData, r.k, clickMaxIter, clickNRuns);
+          setStatus(`Showing K=${r.k} (re-fit on full dataset).`, 'ok');
+        } catch (err) {
+          setStatus(`Refit failed: ${(err && err.message) || err}`, 'err');
+          document.getElementById('run-btn').disabled = false;
+          return;
+        }
+        document.getElementById('run-btn').disabled = false;
+      } else {
+        currentResult = r;
+      }
+      showPlot(currentSamples, currentResult); showTable(currentSamples, currentResult); showCentroids(currentSamples, currentResult); showInterpretPanel();
+    };
     const label = document.createElement('div'); label.className = 'bic-label'; label.textContent = 'K=' + r.k;
-    if (i === bestIdx) label.style.color = 'var(--accent)';
+    let tag = null;
+    if (i === bestIdx) {
+      label.style.color = highlightColor;
+      tag = document.createElement('div');
+      tag.style.cssText = `font-size:9px; letter-spacing:0.05em; color:${highlightColor}; margin-bottom:3px;`;
+      tag.textContent = elbowFound ? 'ELBOW' : 'NO ELBOW';
+    }
+    // Tag goes in first (top of the column) rather than inside the bottom
+    // label — the wrap packs its children against the bottom edge, so
+    // anything added below the label would push that bar's own bottom edge
+    // up out of alignment with the rest. Adding height above instead leaves
+    // every bar's bottom edge anchored to the same uniform-height label row.
+    if (tag) wrap.append(tag);
     wrap.append(val, bar, label); c.appendChild(wrap);
+    allWraps.push(wrap);
   });
+  markViewing(bestIdx);
 }
 
 function getSorted(samples, result, mode) {
